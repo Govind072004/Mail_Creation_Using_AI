@@ -34,7 +34,7 @@ logging.basicConfig(
     format="%(asctime)s - [%(levelname)s] - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
-        logging.FileHandler("pipeline_run.log", mode="w", encoding="utf-8"),
+        logging.FileHandler("/tmp/pipeline_run.log", mode="w", encoding="utf-8"),
         logging.StreamHandler(sys.stdout),
     ],
 )
@@ -1168,7 +1168,7 @@ def run_serpapi_email_generation(
     df:                 pd.DataFrame,
     json_data_folder:   str  = "structured_company_data",
     service_focus:      str  = "salesforce",
-    email_cache_folder: str  = "email_generation_cache_serpapi",
+    email_cache_folder: str  = "/tmp/email_generation_cache_serpapi",
 ) -> pd.DataFrame:
     """
     Synchronous entry point.
