@@ -105,7 +105,8 @@ def main():
     if st.session_state.final_csv_data is not None:
         st.divider()
         st.markdown("### 🔥 Preview Generated Content")
-        st.dataframe(st.session_state.final_df_preview.head(), use_container_width=True)
+        # st.dataframe(st.session_state.final_df_preview.head(), use_container_width=True)
+        st.dataframe(st.session_state.final_df_preview.head(), width="stretch")
         st.download_button(
             label="📥 Download Final Output (CSV)",
             data=st.session_state.final_csv_data,
