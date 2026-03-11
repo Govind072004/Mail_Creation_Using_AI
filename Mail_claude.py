@@ -483,17 +483,17 @@ async def _email_worker_loop(
             continue
 
         
-        if key_worker.provider == "groq":
-            gemini_or_cerebras_free = any(
-                not w.is_exhausted and not w.is_cooling
-                for w in worker_pool
-                if w.provider in ("gemini", "cerebras")
-            )
-            if gemini_or_cerebras_free:
-                await queue.put(task)
-                queue.task_done()
-                await asyncio.sleep(1.5)
-                continue
+        # if key_worker.provider == "groq":
+        #     gemini_or_cerebras_free = any(
+        #         not w.is_exhausted and not w.is_cooling
+        #         for w in worker_pool
+        #         if w.provider in ("gemini", "cerebras")
+        #     )
+        #     if gemini_or_cerebras_free:
+        #         await queue.put(task)
+        #         queue.task_done()
+        #         await asyncio.sleep(1.5)
+        #         continue
        
         ready = await key_worker.wait_and_acquire()
         if not ready:
@@ -587,7 +587,8 @@ async def _email_worker_loop(
                             f"{CONSECUTIVE_FAILURES} consecutive failures. "
                             "Halting pipeline to protect API keys."
                         )
-                        sys.exit(1)
+                        # sys.exit(1)
+                        raise RuntimeError("Circuit breaker: too many consecutive failures.")
 
                 results[index] = {
                     "company":    company,
@@ -811,7 +812,7 @@ async def _retry_failed_emails(
     # ]
     retry_workers = [
     w for w in worker_pool
-    if w.provider in ("cerebras", "gemini", "groq")  # ← Groq added
+    if w.provider in ("cerebras", "groq")  # ← Groq added
 ]
 
     # ERROR wali rows find karo
