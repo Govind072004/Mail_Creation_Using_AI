@@ -1201,6 +1201,23 @@ def run_serpapi_email_generation(
     Synchronous entry point.
     Safe to call from Streamlit, Jupyter, or any non-async context.
     """
+    # try:
+    #     loop = asyncio.get_event_loop()
+    #     if loop.is_closed():
+    #         raise RuntimeError
+    # except RuntimeError:
+    #     loop = asyncio.new_event_loop()
+    #     asyncio.set_event_loop(loop)
+
+    # return loop.run_until_complete(
+    #     _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
+    # )
+    try:
+        import nest_asyncio
+        nest_asyncio.apply()
+    except ImportError:
+        pass  # nest_asyncio not installed, will try anyway
+
     try:
         loop = asyncio.get_event_loop()
         if loop.is_closed():
