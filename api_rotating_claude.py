@@ -217,9 +217,9 @@ class KeyWorker:
       On success → retry counter resets to 0
     """
 
-    # ── CHANGE 3: Exponential backoff constants ──────────────────────
-    _BACKOFF_BASE    = 65.0   # seconds for 1st 429
-    _BACKOFF_MAX     = 600.0  # hard ceiling (10 minutes)
+    # # ── CHANGE 3: Exponential backoff constants ──────────────────────
+    # _BACKOFF_BASE    = 65.0   # seconds for 1st 429
+    # _BACKOFF_MAX     = 600.0  # hard ceiling (10 minutes)
 
     def __init__(
         self,
@@ -320,10 +320,16 @@ class KeyWorker:
         self.daily_count  = max(0, self.daily_count - 1)
         self._retry_count += 1
 
-        wait = min(
-            self._BACKOFF_BASE * (2 ** (self._retry_count - 1)),
-            self._BACKOFF_MAX,
-        )
+        # wait = min(
+        #     self._BACKOFF_BASE * (2 ** (self._retry_count - 1)),
+        #     self._BACKOFF_MAX,
+        # )
+        if self.provider == "gemini":
+            base, cap = 65.0, 130.0   # Google needs full minute
+        else:
+            base, cap = 20.0, 60.0    # Cerebras/Groq recover fast
+
+        wait = min(base * (2 ** (self._retry_count - 1)), cap)
         self._cooling_until = time.monotonic() + wait
 
         masked = self.api_key[:6] + "..." + self.api_key[-4:]
@@ -424,7 +430,7 @@ def build_worker_pool() -> list:
             provider      = "gemini",
             sleep_sec     = 6.5,
             daily_cap     = gemini_cap,
-            startup_delay = i * 1.0,     # ← CHANGE 1: 0s, 1s, 2s … 8s
+            startup_delay = i * 2.0,     # ← CHANGE 1: 0s, 1s, 2s … 8s
         ))
 
     # ── Cerebras workers ─────────────────────────────────────────────
@@ -433,9 +439,9 @@ def build_worker_pool() -> list:
         workers.append(KeyWorker(
             api_key       = key,
             provider      = "cerebras",
-            sleep_sec     = 3.0,
+            sleep_sec     =  2.5,
             daily_cap     = cerebras_cap,
-            startup_delay = i * 1.5,     # ← CHANGE 1: 0s, 1.5s, 3s
+            startup_delay = i * 0.5,     # ← CHANGE 1: 0s, 1.5s, 3s
         ))
 
     # ── Groq workers ─────────────────────────────────────────────────
@@ -446,7 +452,7 @@ def build_worker_pool() -> list:
             provider      = "groq",
             sleep_sec     = 6.5,
             daily_cap     = groq_cap,
-            startup_delay = i * 1.0,     # ← CHANGE 1: 0s, 1s, 2s … 5s
+            startup_delay = i * 0.5,     # ← CHANGE 1: 0s, 1s, 2s … 5s
         ))
 
     # ── Summary log ──────────────────────────────────────────────────
@@ -472,7 +478,7 @@ def build_worker_pool() -> list:
 
     if len(workers) == 0:
         raise RuntimeError(
-            " No API keys found in .env. "
+            "❌ No API keys found in .env. "
             "Add GOOGLE_API_KEY, CEREBRAS_API_KEY, and/or GROQ_API_KEY."
         )
 
