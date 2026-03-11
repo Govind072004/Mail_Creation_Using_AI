@@ -981,6 +981,7 @@ async def _async_email_runner(
     # ── Build task queue + handle cache hits ──────────────────────
     queue          = asyncio.Queue()
     tasks_to_run   = []
+    processed_companies = {}
 
     for index, row in df_output.iterrows():
         company_name  = str(row.get("Company Name", "")).strip()
@@ -994,6 +995,21 @@ async def _async_email_runner(
         cache_path = os.path.join(
             email_cache_folder, f"{safe_filename}_{service_focus.lower()}.json"
         )
+        
+
+        # ── Duplicate company check (same company, multiple contacts) ──
+        if company_name in processed_companies:
+            prev_cache = processed_companies[company_name]
+            if os.path.exists(prev_cache):
+                with open(prev_cache, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                df_output.at[index, "Generated_Email_Subject"] = cached.get("subject", "")
+                df_output.at[index, "Generated_Email_Body"]    = cached.get("body", "")
+                df_output.at[index, "AI_Source"]               = "Cache(same-company)"
+                logging.info(f"⏩ Duplicate company reuse: {company_name}")
+            continue
+
+      
 
         # ── Cache check ───────────────────────────────────────────
         if os.path.exists(cache_path):
@@ -1046,6 +1062,15 @@ async def _async_email_runner(
             market_news, pain_points_str, service_focus,
         )
 
+        # task = {
+        #     "company":     company_name,
+        #     "index":       index,
+        #     "prompt":      full_prompt,
+        #     "cache_path":  cache_path,
+        #     "retry_count": 0,
+        # }
+        # tasks_to_run.append(task)
+        # processed_companies[company_name] = cache_path
         task = {
             "company":     company_name,
             "index":       index,
@@ -1054,6 +1079,7 @@ async def _async_email_runner(
             "retry_count": 0,
         }
         tasks_to_run.append(task)
+        processed_companies[company_name] = cache_path  # track for duplicates
 
     # ── Nothing to do? ────────────────────────────────────────────
     if not tasks_to_run:
