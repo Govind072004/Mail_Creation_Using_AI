@@ -9,3 +9,4 @@ Requests
 serpapi
 streamlit
 google-genai
+nest_asyncio
