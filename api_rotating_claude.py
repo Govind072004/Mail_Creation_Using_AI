@@ -472,7 +472,7 @@ def build_worker_pool() -> list:
 
     if len(workers) == 0:
         raise RuntimeError(
-            "❌ No API keys found in .env. "
+            " No API keys found in .env. "
             "Add GOOGLE_API_KEY, CEREBRAS_API_KEY, and/or GROQ_API_KEY."
         )
 
