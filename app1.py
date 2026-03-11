@@ -53,14 +53,15 @@ def main():
                 progress_text.text("🔍 Phase 1: Running SerpAPI Deep Research...")
                 progress_bar.progress(20)
                 
-                output_folder = "structured_company_data"
+                # output_folder = "structured_company_data"
+                output_folder = "/tmp/structured_company_data"
                 run_serpapi_research(df, output_folder=output_folder, batch_size=10)
                 
                 # --- Phase 2: Email Generation ---
                 progress_text.text(f"✍️ Phase 2: Generating Personalized Emails (Focus: {service_choice})...")
                 progress_bar.progress(60)
                 
-                final_email_df = run_serpapi_email_generation(df, json_data_folder=output_folder, service_focus=service_choice)
+                final_email_df = run_serpapi_email_generation(df, json_data_folder=output_folder, service_focus=service_choice,email_cache_folder="/tmp/email_generation_cache_serpapi",)
                 
                 # --- Phase 3: Format Columns & Inject Name ---
                 progress_text.text("📊 Formatting Output File and Injecting Names...")
@@ -80,7 +81,8 @@ def main():
                 filtered_output_df['Email_Body'] = filtered_output_df.apply(inject_first_name, axis=1)
 
                 # --- Phase 4: AUTOMATICALLY SAVE TO LOCAL FOLDER ---
-                local_save_dir = "local_output_files"
+                # local_save_dir = "local_output_files"
+                local_save_dir = "/tmp/local_output_files"
                 if not os.path.exists(local_save_dir):
                     os.makedirs(local_save_dir)
                 
