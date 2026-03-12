@@ -240,7 +240,16 @@ class KeyWorker:
         self._retry_count   = 0
 
     def _get_lock(self) -> asyncio.Lock:
-        if self._lock is None:
+        # FIX: asyncio.Lock binds to the running loop at creation time.
+        # If loop changes between calls (new event loop per pipeline run),
+        # a stale cached Lock causes: RuntimeError('Timeout should be used inside a task')
+        # Solution: check if cached lock belongs to current running loop; if not, make a new one.
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if self._lock is None or getattr(self._lock, '_loop', None) is not running_loop:
             self._lock = asyncio.Lock()
         return self._lock
 
