@@ -1,3 +1,7 @@
+
+
+
+
 import os
 import json
 import pandas as pd
@@ -161,24 +165,33 @@ async def call_azure_async(prompt: str) -> str:
 # ==============================================================================
  
 _SERVICE_BLOCK_AI = """
-* AI agents built on custom LLMs and RAG — answers from internal data, not generic responses
-* Predictive models for lead scoring, demand forecasting, churn — so the team works the right accounts
-* ETL pipelines and data warehouses built for real-time analytics, not quarterly reports
-* End-to-end process automation with Python and AI frameworks — repetitive work removed, not reassigned
-* Specialists in AI, ML, data engineering — screened, tested, contract or remote, onboarding in days"""
+- Build enterprise AI agents using custom LLMs and RAG pipelines to automate insights from your company data.
+- Develop predictive ML models for lead scoring, demand forecasting, and churn prediction to help your team prioritize high-value opportunities.
+- Design scalable ETL pipelines and modern data warehouses for accurate, real-time analytics.
+- Automate end-to-end business processes with Python and AI frameworks, freeing staff from repetitive tasks while maintaining alignment with existing workflows.
+- Highlight certified AI, data science, ML, and automation experts who are screened, tested, and ready-to-work.
+- Emphasize flexible hiring models (contract, contract-to-hire, remote staffing).
+- Highlight fast onboarding in days.
+- Stress technical match + culture-fit."""
  
 _SERVICE_BLOCK_SALESFORCE = """
-* Sales, Service, Health, and Financial Services Cloud implementations built around actual workflows — not default configs
-* Custom Apex, Lightning Web Components, and Flow automations that cut manual steps teams have lived with for years
-* AppExchange integrations, Pardot/Marketing Cloud campaigns, multi-org migrations — handled without business disruption
-* 24/7 managed services with proactive health checks — technical debt caught before it becomes an incident
-* Salesforce developers, admins, consultants across clouds — contract or remote, onboarding in days"""
- 
+- Implement Salesforce Sales, Service, Health, and Financial Services Clouds tailored to your company’s workflows for unified operations.
+- Develop custom Apex code, Lightning Web Components (LWC), and complex Flow automations to reduce manual effort and improve efficiency.
+- Build or integrate AppExchange apps, automate marketing campaigns via Pardot/Marketing Cloud, and manage multi-org migrations to streamline cross-team processes.
+- Provide 24/7 managed services including proactive system health checks to detect and fix technical debt before it impacts performance.
+- Showcase certified Salesforce developers, admins, consultants across multiple clouds.
+- Highlight flexible engagement models (contract, contract-to-hire, remote staffing).
+- Emphasize quick onboarding.
+- Stress skills match + culture-fit."""
 _SERVICE_BLOCK_COMBINED = """
-* Predictive AI/ML models wired into Salesforce dashboards — lead scoring and forecasting that actually reflects reality
-* Workflows combining Lightning Components, Flows, and Python-based AI — CRM and analytics moving together, not separately
-* AI agents querying Salesforce data in real time — anomalies caught, insights surfaced without someone pulling reports
-* Specialists skilled in both Salesforce and AI — no handoff gaps, onboarding in days, contract or remote"""
+- Integrate predictive AI/ML models with Salesforce dashboards to forecast opportunities, optimize lead scoring, and drive data-backed decisions.
+- Automate workflows combining Lightning Components, Flows, and Python-based AI scripts for seamless operations across CRM and analytics systems.
+- Build enterprise AI agents that interact with Salesforce data to answer queries, detect anomalies, and provide actionable insights in real time.
+- Ensure technical and cultural alignment with fast onboarding so the team can start contributing immediately while maintaining continuity with existing processes.
+- Present certified professionals skilled in both.
+- Highlight engagement flexibility.
+- Emphasize fast onboarding.
+- Stress dual technical + culture alignment."""
  
 _SERVICE_BLOCKS = {
     "ai":         _SERVICE_BLOCK_AI,
@@ -602,9 +615,24 @@ async def _retry_failed_emails(
             .strip().replace(" ", "_").lower()
         )
  
+        # json_path       = os.path.join(json_data_folder, f"{safe_filename}.json")
+        # pain_points_str = "Not available."
+        # market_news     = "No recent market updates available."
+ 
+        # if os.path.exists(json_path):
+        #     with open(json_path, "r", encoding="utf-8") as f:
+        #         research = json.load(f)
+        #     if "pain_points" in research:
+        #         pain_points_str = "\n".join([f"- {p}" for p in research["pain_points"]])
+        #     if "recent_news" in research:
+        #         market_news = "\n---\n".join([
+        #             f"Title: {n.get('title')}\nSource: {n.get('source')}"
+        #             for n in research["recent_news"][:3]
+        #         ])
+
         json_path       = os.path.join(json_data_folder, f"{safe_filename}.json")
-        pain_points_str = "Not available."
-        market_news     = "No recent market updates available."
+        pain_points_str = f"Specific data not found. Please infer 2 highly critical business pain points for a {industry} company operating with {financial_intel}."
+        market_news     = f"No recent news found. Use their financial status ({financial_intel}) or a massive recent trend in the {industry} sector as the opening signal."
  
         if os.path.exists(json_path):
             with open(json_path, "r", encoding="utf-8") as f:
@@ -616,6 +644,12 @@ async def _retry_failed_emails(
                     f"Title: {n.get('title')}\nSource: {n.get('source')}"
                     for n in research["recent_news"][:3]
                 ])
+        
+        # SMART FALLBACK CHECK FOR EMPTY ARRAYS
+        if not pain_points_str.strip():
+            pain_points_str = f"Specific data not found. Please infer 2 highly critical business pain points for a {industry} company operating with {financial_intel}."
+        if not market_news.strip() or market_news == "\n---\n":
+            market_news = f"No recent news found. Use their financial status ({financial_intel}) or a massive recent trend in the {industry} sector as the opening signal."
  
         cache_path  = os.path.join(
             email_cache_folder, f"{safe_filename}_{service_focus.lower()}.json"
@@ -722,9 +756,24 @@ async def _retry_failed_emails(
                             "".join(c for c in company_name if c.isalnum() or c in "._- ")
                             .strip().replace(" ", "_").lower()
                         )
+                        # json_path       = os.path.join(json_data_folder, f"{safe_filename}.json")
+                        # pain_points_str = "Not available."
+                        # market_news     = "No recent market updates available."
+                        # if os.path.exists(json_path):
+                        #     with open(json_path, "r", encoding="utf-8") as f:
+                        #         research = json.load(f)
+                        #     if "pain_points" in research:
+                        #         pain_points_str = "\n".join([f"- {p}" for p in research["pain_points"]])
+                        #     if "recent_news" in research:
+                        #         market_news = "\n---\n".join([
+                        #             f"Title: {n.get('title')}\nSource: {n.get('source')}"
+                        #             for n in research["recent_news"][:3]
+                        #         ])
+
                         json_path       = os.path.join(json_data_folder, f"{safe_filename}.json")
-                        pain_points_str = "Not available."
-                        market_news     = "No recent market updates available."
+                        pain_points_str = f"Specific data not found. Please infer 2 highly critical business pain points for a {industry} company operating with {financial_intel}."
+                        market_news     = f"No recent news found. Use their financial status ({financial_intel}) or a massive recent trend in the {industry} sector as the opening signal."
+                        
                         if os.path.exists(json_path):
                             with open(json_path, "r", encoding="utf-8") as f:
                                 research = json.load(f)
@@ -735,6 +784,12 @@ async def _retry_failed_emails(
                                     f"Title: {n.get('title')}\nSource: {n.get('source')}"
                                     for n in research["recent_news"][:3]
                                 ])
+                        
+                        # SMART FALLBACK CHECK FOR EMPTY ARRAYS
+                        if not pain_points_str.strip():
+                            pain_points_str = f"Specific data not found. Please infer 2 highly critical business pain points for a {industry} company operating with {financial_intel}."
+                        if not market_news.strip() or market_news == "\n---\n":
+                            market_news = f"No recent news found. Use their financial status ({financial_intel}) or a massive recent trend in the {industry} sector as the opening signal."
                         prompt = _build_email_prompt(
                             company_name, industry, financial_intel,
                             market_news, pain_points_str, service_focus,
@@ -886,10 +941,41 @@ async def _async_email_runner(
             df_output.at[index, "AI_Source"]               = cached.get("source",  "Cache")
             continue
  
+        # # Load research data
+        # json_path       = os.path.join(json_data_folder, f"{safe_filename}.json")
+        # pain_points_str = "Not available."
+        # market_news     = "No recent market updates available."
+ 
+        # if os.path.exists(json_path):
+        #     with open(json_path, "r", encoding="utf-8") as f:
+        #         research = json.load(f)
+        #     if "pain_points" in research:
+        #         pain_points_str = "\n".join(
+        #             [f"- {p}" for p in research["pain_points"]]
+        #         )
+        #     if "recent_news" in research:
+        #         market_news = "\n---\n".join([
+        #             f"Title: {n.get('title')}\nSource: {n.get('source')}"
+        #             for n in research["recent_news"][:3]
+        #         ])
+        #         logging.info(f"📊 News loaded for {company_name}")
+ 
+        # # UPDATED: Only read Annual Revenue and Total Funding
+        # financial_intel = (
+        #     f"Revenue: {row.get('Annual Revenue', 'N/A')}, "
+        #     f"Total Funding: {row.get('Total Funding', 'N/A')}"
+        # )
+
+        # UPDATED: Only read Annual Revenue and Total Funding (MOVED UP)
+        financial_intel = (
+            f"Revenue: {row.get('Annual Revenue', 'N/A')}, "
+            f"Total Funding: {row.get('Total Funding', 'N/A')}"
+        )
+
         # Load research data
         json_path       = os.path.join(json_data_folder, f"{safe_filename}.json")
-        pain_points_str = "Not available."
-        market_news     = "No recent market updates available."
+        pain_points_str = f"Specific data not found. Please infer 2 highly critical business pain points for a {industry} company operating with {financial_intel}."
+        market_news     = f"No recent news found. Use their financial status ({financial_intel}) or a massive recent trend in the {industry} sector as the opening signal."
  
         if os.path.exists(json_path):
             with open(json_path, "r", encoding="utf-8") as f:
@@ -904,12 +990,12 @@ async def _async_email_runner(
                     for n in research["recent_news"][:3]
                 ])
                 logging.info(f"📊 News loaded for {company_name}")
- 
-        # UPDATED: Only read Annual Revenue and Total Funding
-        financial_intel = (
-            f"Revenue: {row.get('Annual Revenue', 'N/A')}, "
-            f"Total Funding: {row.get('Total Funding', 'N/A')}"
-        )
+        
+        # SMART FALLBACK CHECK FOR EMPTY ARRAYS LIKE MATRIX IT
+        if not pain_points_str.strip():
+            pain_points_str = f"Specific data not found. Please infer 2 highly critical business pain points for a {industry} company operating with {financial_intel}."
+        if not market_news.strip() or market_news == "\n---\n":
+            market_news = f"No recent news found. Use their financial status ({financial_intel}) or a massive recent trend in the {industry} sector as the opening signal."
  
         logging.info(
             f"\n{'='*48}\n"
