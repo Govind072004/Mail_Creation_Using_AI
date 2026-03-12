@@ -4,17 +4,18 @@ api_rotating_claude.py
 Production-ready API Key Rotation Manager
 Designed for Render Free Tier deployment.
 
-VERSION: 3.0 — Three critical fixes applied over v2:
+VERSION: 3.1 — Fixes applied:
   FIX 1 → wait_and_acquire() is now NON-BLOCKING.
-  FIX 2 → SerpAPI validation now uses httpx (async HTTP).
-  FIX 3 → Permanently dead keys are auto-disabled after MAX_FAILURES consecutive 429s.
+  FIX 2 → SerpAPI validation uses synchronous 'requests' to avoid sniffio/httpx async context crashes.
+  FIX 3 → Keys auto-disabled after MAX_FAILURES consecutive 429s.
+  FIX 4 → Threading lock added to SerpAPI initialization.
 """
 
 import os
 import asyncio
 import itertools
 import time
-import httpx
+import threading
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
@@ -24,6 +25,8 @@ _env_path = os.path.join(BASE_DIR, ".env")
 if os.path.exists(_env_path):
     load_dotenv(_env_path)
 
+# Lock to prevent multiple threads from validating SerpAPI keys at the exact same time
+_serpapi_lock = threading.Lock()
 
 def _log_key_usage(service_name: str, key: str, delay: float = 0):
     masked_key = key[:6] + "..." + key[-4:]
@@ -51,59 +54,17 @@ def _create_key_cycle(prefix: str):
     return itertools.cycle(keys), len(keys)
 
 
-# async def _create_smart_serpapi_cycle_async(prefix: str):
-#     raw_keys = _get_all_keys(prefix)
-#     if not raw_keys:
-#         print(f"⚠️  No SerpAPI keys found for prefix '{prefix}'")
-#         return None, 0
-
-#     print(f"🔄 Validating {len(raw_keys)} SerpAPI key(s) concurrently...")
-
-#     async def _check_one_key(client: httpx.AsyncClient, key: str) -> dict | None:
-#         try:
-#             response = await client.get(
-#                 f"https://serpapi.com/account?api_key={key}",
-#                 timeout=5.0
-#             )
-#             data = response.json()
-#             if "error" not in data and response.status_code == 200:
-#                 credits = data.get("total_searches_left", 0)
-#                 if credits > 0:
-#                     return {"key": key, "credits": credits}
-#                 else:
-#                     masked = key[:6] + "..." + key[-4:]
-#                     print(f"⚠️  SerpAPI key {masked} → 0 credits, skipping.")
-#         except Exception as e:
-#             masked = key[:6] + "..." + key[-4:]
-#             print(f"⚠️  SerpAPI key {masked} → Validation failed ({e}), skipping.")
-#         return None
-
-#     async with httpx.AsyncClient() as client:
-#         results = await asyncio.gather(*[_check_one_key(client, k) for k in raw_keys])
-
-#     valid_keys_info = [r for r in results if r is not None]
-
-#     if not valid_keys_info:
-#         print("❌ Critical: All SerpAPI keys are invalid or have 0 credits.")
-#         return None, 0
-
-#     valid_keys_info.sort(key=lambda x: x["credits"], reverse=True)
-#     sorted_keys = [item["key"] for item in valid_keys_info]
-
-#     print(f"✅ SerpAPI: {len(sorted_keys)} active key(s) validated.")
-#     print(f"🏆 Top key has {valid_keys_info[0]['credits']} credits remaining.")
-
-#     return itertools.cycle(sorted_keys), len(sorted_keys)
-
 def _create_smart_serpapi_cycle_sync(prefix: str):
-
+    """
+    Synchronous SerpAPI validator using 'requests'.
+    This safely bypasses the httpx/sniffio async context issues in ThreadPoolExecutor.
+    """
     raw_keys = _get_all_keys(prefix)
     if not raw_keys:
         print(f"⚠️ No SerpAPI keys found for prefix '{prefix}'")
         return None, 0
 
     print(f"🔄 Validating {len(raw_keys)} SerpAPI key(s)...")
-
     valid_keys = []
 
     for key in raw_keys:
@@ -113,7 +74,6 @@ def _create_smart_serpapi_cycle_sync(prefix: str):
                 params={"api_key": key},
                 timeout=5
             )
-
             data = r.json()
 
             if "error" not in data and r.status_code == 200:
@@ -136,46 +96,7 @@ def _create_smart_serpapi_cycle_sync(prefix: str):
     sorted_keys = [k[0] for k in valid_keys]
 
     print(f"✅ SerpAPI: {len(sorted_keys)} active key(s) validated")
-
     return itertools.cycle(sorted_keys), len(sorted_keys)
-
-
-# Thread-local storage — keeps one event loop alive per thread
-import threading
-_thread_local = threading.local()
-
-def _get_or_create_loop() -> asyncio.AbstractEventLoop:
-    """
-    Returns a running event loop for the current thread.
-    Creates and stores one if none exists yet.
-    Never closes it — keeps it alive for the thread lifetime.
-    This is the key fix: httpx/sniffio needs a persistent loop per thread.
-    """
-    loop = getattr(_thread_local, "loop", None)
-    if loop is None or loop.is_closed():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        _thread_local.loop = loop
-    return loop
-
-def _create_smart_serpapi_cycle_sync(prefix: str):
-    """
-    Synchronous wrapper around the async SerpAPI validator.
-    FIX: Uses a persistent per-thread event loop so httpx/sniffio
-    can properly detect the async context across multiple calls.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-        # Event loop already running (e.g. FastAPI/async context)
-        import concurrent.futures
-        future = asyncio.run_coroutine_threadsafe(
-            _create_smart_serpapi_cycle_async(prefix), loop
-        )
-        return future.result(timeout=60)
-    except RuntimeError:
-        # No event loop in this thread — get or create a persistent one
-        loop = _get_or_create_loop()
-        return loop.run_until_complete(_create_smart_serpapi_cycle_async(prefix))
 
 
 _groq_cycle,     _groq_count     = None, 0
@@ -229,19 +150,17 @@ def get_tavily_key(delay: float = 0) -> str:
     return key
 
 
-# def get_serpapi_key(delay: float = 0) -> str:
-#     global _serpapi_cycle, _serpapi_count
-#     if _serpapi_cycle is None:
-#         _serpapi_cycle, _serpapi_count = _create_smart_serpapi_cycle_sync("SERPAPI_KEY")
-#         if _serpapi_cycle is None:
-#             raise ValueError("❌ No SerpAPI keys available.")
-#     key = next(_serpapi_cycle)
-#     _log_key_usage("SERPAPI", key, delay)
-#     return key
 def get_serpapi_key(delay: float = 0) -> str:
     global _serpapi_cycle, _serpapi_count
-    if _serpapi_cycle is None:
-        _serpapi_cycle, _serpapi_count = _create_smart_serpapi_cycle_sync("SERPAPI_KEY")
+    with _serpapi_lock:
+        if _serpapi_cycle is None:
+            _serpapi_cycle, _serpapi_count = _create_smart_serpapi_cycle_sync("SERPAPI_KEY")
+            if _serpapi_cycle is None:
+                raise ValueError("❌ No SerpAPI keys available.")
+                
+    key = next(_serpapi_cycle)
+    _log_key_usage("SERPAPI", key, delay)
+    return key
 
 
 def get_azure_config() -> dict:
@@ -421,15 +340,15 @@ def build_worker_pool() -> list:
 
     print(
         f"\n{'='*68}\n"
-        f"  ASYNC WORKER POOL READY  (v3 — non-blocking + async SerpAPI + auto-disable)\n"
+        f"  ASYNC WORKER POOL READY  (v3.1 — non-blocking + sync SerpAPI + auto-disable)\n"
         f"  Gemini   : {g:>2} worker(s) → {g*10:>4}/min | {g*gemini_cap:>8,}/day  (cap={gemini_cap}, stagger=2.0s, cooldown=30s, max_fail={KeyWorker.MAX_FAILURES})\n"
         f"  Cerebras : {c:>2} worker(s) → {c*24:>4}/min | {c*cerebras_cap:>8,}/day  (cap={cerebras_cap}, stagger=0.5s, cooldown=15s, max_fail={KeyWorker.MAX_FAILURES})\n"
         f"  Groq     : {q:>2} worker(s) → {q*9:>4}/min  | {q*groq_cap:>8,}/day  (cap={groq_cap}, stagger=0.5s, cooldown=20s, max_fail={KeyWorker.MAX_FAILURES})\n"
         f"  TOTAL    : {len(workers)} worker(s) → {g*10 + c*24 + q*9}/min combined\n"
         f"  FIX 1    : Cooling workers skipped instantly (non-blocking)\n"
-        f"  FIX 2    : SerpAPI validation is now async (httpx, non-blocking)\n"
+        f"  FIX 2    : SerpAPI validation is now sync to prevent sniffio crashes\n"
         f"  FIX 3    : Keys auto-disabled after {KeyWorker.MAX_FAILURES} consecutive 429s\n"
-        f"  FIX 4    : Thread event loop explicitly set (sniffio/httpx fix)\n"
+        f"  FIX 4    : Thread event loop explicitly set\n"
         f"{'='*68}\n"
     )
 
@@ -437,4 +356,3 @@ def build_worker_pool() -> list:
         raise RuntimeError("❌ No API keys found. Set at least one of: GOOGLE_API_KEY, CEREBRAS_API_KEY, GROQ_API_KEY.")
 
     return workers
-
