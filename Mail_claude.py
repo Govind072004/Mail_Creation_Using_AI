@@ -1,7 +1,3 @@
-
- 
- 
- 
 import os
 import json
 import pandas as pd
@@ -10,6 +6,7 @@ import re
 import sys
 import logging
 import time
+import threading
  
 from google import genai
 from google.genai import types
@@ -55,13 +52,8 @@ CONSECUTIVE_FAILURES  = 0
 MAX_FAILURES          = 7
 CIRCUIT_BREAKER_TRIPPED = False
  
-_cb_lock: asyncio.Lock | None = None
- 
-def _get_cb_lock() -> asyncio.Lock:
-    global _cb_lock
-    if _cb_lock is None:
-        _cb_lock = asyncio.Lock()
-    return _cb_lock
+# threading.Lock — safe across all threads and event loops (no "attached to different loop" crash)
+_cb_lock = threading.Lock()
  
  
 # ==============================================================================
@@ -433,7 +425,7 @@ async def _email_worker_loop(
             
             raw_email = raw_email or "ERROR: API returned empty response"
  
-            async with _get_cb_lock():
+            with _cb_lock:
                 CONSECUTIVE_FAILURES = 0
  
             key_worker.reset_retry_count()  
@@ -638,7 +630,10 @@ async def _retry_failed_emails(
         )
         for i, w in enumerate(retry_workers)
     ]
-    await asyncio.gather(*worker_coros, return_exceptions=True)
+    _retry_gather_results = await asyncio.gather(*worker_coros, return_exceptions=True)
+    for _r in _retry_gather_results:
+        if isinstance(_r, Exception):
+            logging.error(f"❌ Retry worker crashed: {repr(_r)}")
  
     fixed = 0
     still_failed = []   # companies that failed even Cerebras+Groq retry
@@ -952,7 +947,10 @@ async def _async_email_runner(
         )
         for i, w in enumerate(worker_pool)
     ]
-    await asyncio.gather(*worker_coros, return_exceptions=True)
+    _main_gather_results = await asyncio.gather(*worker_coros, return_exceptions=True)
+    for _r in _main_gather_results:
+        if isinstance(_r, Exception):
+            logging.error(f"❌ Main worker crashed: {repr(_r)}")
  
     # BUG FIX 5: If workers all exited but tasks still remain unprocessed
     # (e.g. all keys exhausted mid-run), drain the queue and log missing companies.
@@ -1057,12 +1055,6 @@ def run_serpapi_email_generation(
     # return loop.run_until_complete(
     #     _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
     # )
-    try:
-        import nest_asyncio
-        nest_asyncio.apply()
-    except ImportError:
-        pass
-
     try:
         return asyncio.run(
             _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
