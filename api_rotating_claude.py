@@ -96,29 +96,42 @@ async def _create_smart_serpapi_cycle_async(prefix: str):
     return itertools.cycle(sorted_keys), len(sorted_keys)
 
 
+# Thread-local storage — keeps one event loop alive per thread
+import threading
+_thread_local = threading.local()
+
+def _get_or_create_loop() -> asyncio.AbstractEventLoop:
+    """
+    Returns a running event loop for the current thread.
+    Creates and stores one if none exists yet.
+    Never closes it — keeps it alive for the thread lifetime.
+    This is the key fix: httpx/sniffio needs a persistent loop per thread.
+    """
+    loop = getattr(_thread_local, "loop", None)
+    if loop is None or loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        _thread_local.loop = loop
+    return loop
+
 def _create_smart_serpapi_cycle_sync(prefix: str):
     """
     Synchronous wrapper around the async SerpAPI validator.
-    FIX: Explicitly creates and sets event loop for background threads
-    so httpx/sniffio can properly detect the async context.
+    FIX: Uses a persistent per-thread event loop so httpx/sniffio
+    can properly detect the async context across multiple calls.
     """
     try:
         loop = asyncio.get_running_loop()
-        # Event loop already running — schedule coroutine thread-safely
+        # Event loop already running (e.g. FastAPI/async context)
         import concurrent.futures
         future = asyncio.run_coroutine_threadsafe(
             _create_smart_serpapi_cycle_async(prefix), loop
         )
         return future.result(timeout=60)
     except RuntimeError:
-        # No event loop in this thread — create one explicitly
-        # asyncio.set_event_loop() ensures httpx/sniffio can detect the context
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(_create_smart_serpapi_cycle_async(prefix))
-        finally:
-            loop.close()
+        # No event loop in this thread — get or create a persistent one
+        loop = _get_or_create_loop()
+        return loop.run_until_complete(_create_smart_serpapi_cycle_async(prefix))
 
 
 _groq_cycle,     _groq_count     = None, 0
