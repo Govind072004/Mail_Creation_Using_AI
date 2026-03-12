@@ -52,7 +52,7 @@ CONSECUTIVE_FAILURES  = 0
 MAX_FAILURES          = 7
 CIRCUIT_BREAKER_TRIPPED = False
  
-# threading.Lock — safe across all threads and event loops (no "attached to different loop" crash)
+# threading.Lock — safe across all threads and event loops
 _cb_lock = threading.Lock()
  
  
@@ -630,8 +630,8 @@ async def _retry_failed_emails(
         )
         for i, w in enumerate(retry_workers)
     ]
-    _retry_gather_results = await asyncio.gather(*worker_coros, return_exceptions=True)
-    for _r in _retry_gather_results:
+    _retry_results = await asyncio.gather(*worker_coros, return_exceptions=True)
+    for _r in _retry_results:
         if isinstance(_r, Exception):
             logging.error(f"❌ Retry worker crashed: {repr(_r)}")
  
@@ -947,8 +947,8 @@ async def _async_email_runner(
         )
         for i, w in enumerate(worker_pool)
     ]
-    _main_gather_results = await asyncio.gather(*worker_coros, return_exceptions=True)
-    for _r in _main_gather_results:
+    _main_results = await asyncio.gather(*worker_coros, return_exceptions=True)
+    for _r in _main_results:
         if isinstance(_r, Exception):
             logging.error(f"❌ Main worker crashed: {repr(_r)}")
  
@@ -1055,19 +1055,24 @@ def run_serpapi_email_generation(
     # return loop.run_until_complete(
     #     _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
     # )
-    try:
-        return asyncio.run(
-            _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
-        )
-    except RuntimeError:
+ 
+    # Use a persistent per-thread event loop so KeyWorker._lock stays valid.
+    # NEVER close the loop — closing it invalidates asyncio.Lock objects
+    # created during the run, causing 'Timeout should be used inside a task'
+    # on the NEXT call when a new loop runs with stale locks.
+    _thread_loops = getattr(run_email_pipeline, "_thread_loops", None)
+    if _thread_loops is None:
+        run_email_pipeline._thread_loops = threading.local()
+
+    loop = getattr(run_email_pipeline._thread_loops, "loop", None)
+    if loop is None or loop.is_closed():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(
-                _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
-            )
-        finally:
-            loop.close()
+        run_email_pipeline._thread_loops.loop = loop
+
+    return loop.run_until_complete(
+        _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
+    )
  
  
 # ==============================================================================
