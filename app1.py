@@ -106,14 +106,28 @@ def _make_email_callback(df: pd.DataFrame, service_focus: str, results_store: di
 
         mini_df = pd.DataFrame(mini_rows)
 
+        # try:
+        #     loop = asyncio.new_event_loop()
+        #     asyncio.set_event_loop(loop)
+        #     batch_result_df = loop.run_until_complete(
+        #         _async_email_runner(df=mini_df, json_data_folder=RESEARCH_FOLDER, service_focus=service_focus, email_cache_folder=EMAIL_CACHE_FOLDER)
+        #     )
+        # finally:
+        #     loop.close()
+
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            batch_result_df = loop.run_until_complete(
+            batch_result_df = asyncio.run(
                 _async_email_runner(df=mini_df, json_data_folder=RESEARCH_FOLDER, service_focus=service_focus, email_cache_folder=EMAIL_CACHE_FOLDER)
             )
-        finally:
-            loop.close()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                batch_result_df = loop.run_until_complete(
+                    _async_email_runner(df=mini_df, json_data_folder=RESEARCH_FOLDER, service_focus=service_focus, email_cache_folder=EMAIL_CACHE_FOLDER)
+                )
+            finally:
+                loop.close()
 
         # Write to plain dict only — NOT st.session_state
         with _pipeline_lock:
@@ -283,4 +297,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
