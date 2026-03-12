@@ -374,7 +374,17 @@ async def _email_worker_loop(
             break
  
         try:
-            task = await asyncio.wait_for(queue.get(), timeout=5.0)
+            # Python 3.14 fix: asyncio.wait_for() requires being inside a Task.
+            # Use asyncio.wait() on a coroutine-wrapped future instead — works in
+            # both bare coroutines and proper Tasks across all Python 3.x versions.
+            get_coro = asyncio.ensure_future(queue.get())
+            done, _ = await asyncio.wait({get_coro}, timeout=5.0)
+            if not done:
+                get_coro.cancel()
+                if len(results) >= total_expected:
+                    break
+                continue
+            task = get_coro.result()
         except asyncio.TimeoutError:
             if len(results) >= total_expected:
                 break
@@ -417,11 +427,17 @@ async def _email_worker_loop(
  
         try:
             if key_worker.provider == "gemini":
-                raw_email = await asyncio.wait_for(call_gemini_async(full_prompt, key_worker.api_key), timeout=35.0)
+                _fut = asyncio.ensure_future(call_gemini_async(full_prompt, key_worker.api_key))
             elif key_worker.provider == "cerebras":
-                raw_email = await asyncio.wait_for(call_cerebras_async(full_prompt, key_worker.api_key), timeout=35.0)
+                _fut = asyncio.ensure_future(call_cerebras_async(full_prompt, key_worker.api_key))
             else:
-                raw_email = await asyncio.wait_for(call_groq_async(full_prompt, key_worker.api_key), timeout=35.0)
+                _fut = asyncio.ensure_future(call_groq_async(full_prompt, key_worker.api_key))
+
+            done, _ = await asyncio.wait({_fut}, timeout=35.0)
+            if not done:
+                _fut.cancel()
+                raise asyncio.TimeoutError()
+            raw_email = _fut.result()
             
             raw_email = raw_email or "ERROR: API returned empty response"
  
@@ -729,7 +745,12 @@ async def _retry_failed_emails(
                         continue
  
                 try:
-                    raw_email = await asyncio.wait_for(call_azure_async(prompt), timeout=45.0)
+                    _az_fut = asyncio.ensure_future(call_azure_async(prompt))
+                    done, _ = await asyncio.wait({_az_fut}, timeout=45.0)
+                    if not done:
+                        _az_fut.cancel()
+                        raise asyncio.TimeoutError()
+                    raw_email = _az_fut.result()
                     raw_email = raw_email or "ERROR: Azure empty response"
                     subject_line, email_body = _parse_email_output(raw_email)
  
@@ -1056,10 +1077,10 @@ def run_serpapi_email_generation(
     #     _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
     # )
  
-    # Use a persistent per-thread event loop so KeyWorker._lock stays valid.
-    # NEVER close the loop — closing it invalidates asyncio.Lock objects
-    # created during the run, causing 'Timeout should be used inside a task'
-    # on the NEXT call when a new loop runs with stale locks.
+    # Python 3.14 FIX: run_until_complete() on a bare coroutine does NOT create a Task.
+    # asyncio.ensure_future / asyncio.wait require the caller to be scheduled as a Task.
+    # Solution: wrap the main coroutine in loop.create_task() so it runs as a proper Task,
+    # then block on it with loop.run_until_complete(). This is safe across Python 3.8–3.14+.
     _thread_loops = getattr(run_email_pipeline, "_thread_loops", None)
     if _thread_loops is None:
         run_email_pipeline._thread_loops = threading.local()
@@ -1070,9 +1091,10 @@ def run_serpapi_email_generation(
         asyncio.set_event_loop(loop)
         run_email_pipeline._thread_loops.loop = loop
 
-    return loop.run_until_complete(
-        _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
-    )
+    async def _task_wrapper():
+        return await _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
+
+    return loop.run_until_complete(_task_wrapper())
  
  
 # ==============================================================================
