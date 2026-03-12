@@ -51,47 +51,91 @@ def _create_key_cycle(prefix: str):
     return itertools.cycle(keys), len(keys)
 
 
-async def _create_smart_serpapi_cycle_async(prefix: str):
+# async def _create_smart_serpapi_cycle_async(prefix: str):
+#     raw_keys = _get_all_keys(prefix)
+#     if not raw_keys:
+#         print(f"⚠️  No SerpAPI keys found for prefix '{prefix}'")
+#         return None, 0
+
+#     print(f"🔄 Validating {len(raw_keys)} SerpAPI key(s) concurrently...")
+
+#     async def _check_one_key(client: httpx.AsyncClient, key: str) -> dict | None:
+#         try:
+#             response = await client.get(
+#                 f"https://serpapi.com/account?api_key={key}",
+#                 timeout=5.0
+#             )
+#             data = response.json()
+#             if "error" not in data and response.status_code == 200:
+#                 credits = data.get("total_searches_left", 0)
+#                 if credits > 0:
+#                     return {"key": key, "credits": credits}
+#                 else:
+#                     masked = key[:6] + "..." + key[-4:]
+#                     print(f"⚠️  SerpAPI key {masked} → 0 credits, skipping.")
+#         except Exception as e:
+#             masked = key[:6] + "..." + key[-4:]
+#             print(f"⚠️  SerpAPI key {masked} → Validation failed ({e}), skipping.")
+#         return None
+
+#     async with httpx.AsyncClient() as client:
+#         results = await asyncio.gather(*[_check_one_key(client, k) for k in raw_keys])
+
+#     valid_keys_info = [r for r in results if r is not None]
+
+#     if not valid_keys_info:
+#         print("❌ Critical: All SerpAPI keys are invalid or have 0 credits.")
+#         return None, 0
+
+#     valid_keys_info.sort(key=lambda x: x["credits"], reverse=True)
+#     sorted_keys = [item["key"] for item in valid_keys_info]
+
+#     print(f"✅ SerpAPI: {len(sorted_keys)} active key(s) validated.")
+#     print(f"🏆 Top key has {valid_keys_info[0]['credits']} credits remaining.")
+
+#     return itertools.cycle(sorted_keys), len(sorted_keys)
+
+def _create_smart_serpapi_cycle_sync(prefix: str):
+
     raw_keys = _get_all_keys(prefix)
     if not raw_keys:
-        print(f"⚠️  No SerpAPI keys found for prefix '{prefix}'")
+        print(f"⚠️ No SerpAPI keys found for prefix '{prefix}'")
         return None, 0
 
-    print(f"🔄 Validating {len(raw_keys)} SerpAPI key(s) concurrently...")
+    print(f"🔄 Validating {len(raw_keys)} SerpAPI key(s)...")
 
-    async def _check_one_key(client: httpx.AsyncClient, key: str) -> dict | None:
+    valid_keys = []
+
+    for key in raw_keys:
         try:
-            response = await client.get(
-                f"https://serpapi.com/account?api_key={key}",
-                timeout=5.0
+            r = requests.get(
+                "https://serpapi.com/account",
+                params={"api_key": key},
+                timeout=5
             )
-            data = response.json()
-            if "error" not in data and response.status_code == 200:
+
+            data = r.json()
+
+            if "error" not in data and r.status_code == 200:
                 credits = data.get("total_searches_left", 0)
+
                 if credits > 0:
-                    return {"key": key, "credits": credits}
+                    valid_keys.append((key, credits))
                 else:
                     masked = key[:6] + "..." + key[-4:]
-                    print(f"⚠️  SerpAPI key {masked} → 0 credits, skipping.")
+                    print(f"⚠️ SerpAPI key {masked} → 0 credits")
         except Exception as e:
             masked = key[:6] + "..." + key[-4:]
-            print(f"⚠️  SerpAPI key {masked} → Validation failed ({e}), skipping.")
-        return None
+            print(f"⚠️ SerpAPI key {masked} → Validation failed ({e})")
 
-    async with httpx.AsyncClient() as client:
-        results = await asyncio.gather(*[_check_one_key(client, k) for k in raw_keys])
-
-    valid_keys_info = [r for r in results if r is not None]
-
-    if not valid_keys_info:
-        print("❌ Critical: All SerpAPI keys are invalid or have 0 credits.")
+    if not valid_keys:
+        print("❌ No valid SerpAPI keys found.")
         return None, 0
 
-    valid_keys_info.sort(key=lambda x: x["credits"], reverse=True)
-    sorted_keys = [item["key"] for item in valid_keys_info]
+    valid_keys.sort(key=lambda x: x[1], reverse=True)
+    sorted_keys = [k[0] for k in valid_keys]
 
-    print(f"✅ SerpAPI: {len(sorted_keys)} active key(s) validated.")
-    print(f"🏆 Top key has {valid_keys_info[0]['credits']} credits remaining.")
+    print(f"✅ SerpAPI: {len(sorted_keys)} active key(s) validated")
 
     return itertools.cycle(sorted_keys), len(sorted_keys)
 
@@ -185,15 +229,19 @@ def get_tavily_key(delay: float = 0) -> str:
     return key
 
 
+# def get_serpapi_key(delay: float = 0) -> str:
+#     global _serpapi_cycle, _serpapi_count
+#     if _serpapi_cycle is None:
+#         _serpapi_cycle, _serpapi_count = _create_smart_serpapi_cycle_sync("SERPAPI_KEY")
+#         if _serpapi_cycle is None:
+#             raise ValueError("❌ No SerpAPI keys available.")
+#     key = next(_serpapi_cycle)
+#     _log_key_usage("SERPAPI", key, delay)
+#     return key
 def get_serpapi_key(delay: float = 0) -> str:
     global _serpapi_cycle, _serpapi_count
     if _serpapi_cycle is None:
         _serpapi_cycle, _serpapi_count = _create_smart_serpapi_cycle_sync("SERPAPI_KEY")
-        if _serpapi_cycle is None:
-            raise ValueError("❌ No SerpAPI keys available.")
-    key = next(_serpapi_cycle)
-    _log_key_usage("SERPAPI", key, delay)
-    return key
 
 
 def get_azure_config() -> dict:
@@ -389,3 +437,4 @@ def build_worker_pool() -> list:
         raise RuntimeError("❌ No API keys found. Set at least one of: GOOGLE_API_KEY, CEREBRAS_API_KEY, GROQ_API_KEY.")
 
     return workers
+
