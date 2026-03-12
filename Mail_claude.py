@@ -374,17 +374,16 @@ async def _email_worker_loop(
             break
  
         try:
-            # Python 3.14 fix: asyncio.wait_for() requires being inside a Task.
-            # Use asyncio.wait() on a coroutine-wrapped future instead — works in
-            # both bare coroutines and proper Tasks across all Python 3.x versions.
-            get_coro = asyncio.ensure_future(queue.get())
-            done, _ = await asyncio.wait({get_coro}, timeout=5.0)
+            # Python 3.14 FIX: asyncio.wait_for() requires a running Task context.
+            # asyncio.wait() on a Future works outside of Tasks too.
+            _get_fut = asyncio.ensure_future(queue.get())
+            done, _ = await asyncio.wait({_get_fut}, timeout=5.0)
             if not done:
-                get_coro.cancel()
+                _get_fut.cancel()
                 if len(results) >= total_expected:
                     break
                 continue
-            task = get_coro.result()
+            task = _get_fut.result()
         except asyncio.TimeoutError:
             if len(results) >= total_expected:
                 break
@@ -426,18 +425,19 @@ async def _email_worker_loop(
         logging.info(f"[W{worker_id:02d}|{provider_label}] → {company} (attempt {retry_count + 1})")
  
         try:
+            # Python 3.14 FIX: use ensure_future + asyncio.wait instead of wait_for
             if key_worker.provider == "gemini":
-                _fut = asyncio.ensure_future(call_gemini_async(full_prompt, key_worker.api_key))
+                _api_fut = asyncio.ensure_future(call_gemini_async(full_prompt, key_worker.api_key))
             elif key_worker.provider == "cerebras":
-                _fut = asyncio.ensure_future(call_cerebras_async(full_prompt, key_worker.api_key))
+                _api_fut = asyncio.ensure_future(call_cerebras_async(full_prompt, key_worker.api_key))
             else:
-                _fut = asyncio.ensure_future(call_groq_async(full_prompt, key_worker.api_key))
+                _api_fut = asyncio.ensure_future(call_groq_async(full_prompt, key_worker.api_key))
 
-            done, _ = await asyncio.wait({_fut}, timeout=35.0)
+            done, _ = await asyncio.wait({_api_fut}, timeout=35.0)
             if not done:
-                _fut.cancel()
+                _api_fut.cancel()
                 raise asyncio.TimeoutError()
-            raw_email = _fut.result()
+            raw_email = _api_fut.result()
             
             raw_email = raw_email or "ERROR: API returned empty response"
  
@@ -1049,54 +1049,38 @@ async def _async_email_runner(
 # SYNCHRONOUS WRAPPER
 # ==============================================================================
  
-def run_serpapi_email_generation(
+def run_email_pipeline(
     df:                 pd.DataFrame,
     json_data_folder:   str  = "research_cache",
     service_focus:      str  = "salesforce",
     email_cache_folder: str  = "email_cache",
 ) -> pd.DataFrame:
     """
-    Synchronous entry point.
-    Safe to call from Streamlit, Jupyter, or any non-async context.
+    Synchronous entry point — called from app1.py callback (runs in a thread).
+    
+    KEY FIX: Each call creates a FRESH event loop.
+    - KeyWorker._get_lock() now detects loop mismatch and creates a fresh Lock
+    - So stale Lock problem is gone even with fresh loops each time
+    - asyncio.wait_for replaced with ensure_future+asyncio.wait (Python 3.14 safe)
     """
-    # try:
-    #     import nest_asyncio
-    #     nest_asyncio.apply()
-    # except ImportError:
-    #     pass
- 
-    # try:
-    #     loop = asyncio.get_event_loop()
-    #     if loop.is_closed():
-    #         raise RuntimeError
-    # except RuntimeError:
-    #     loop = asyncio.new_event_loop()
-    #     asyncio.set_event_loop(loop)
- 
-    # return loop.run_until_complete(
-    #     _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
-    # )
- 
-    # Python 3.14 FIX: run_until_complete() on a bare coroutine does NOT create a Task.
-    # asyncio.ensure_future / asyncio.wait require the caller to be scheduled as a Task.
-    # Solution: wrap the main coroutine in loop.create_task() so it runs as a proper Task,
-    # then block on it with loop.run_until_complete(). This is safe across Python 3.8–3.14+.
-    _thread_loops = getattr(run_email_pipeline, "_thread_loops", None)
-    if _thread_loops is None:
-        run_email_pipeline._thread_loops = threading.local()
+    # Always create a fresh loop per call.
+    # KeyWorker._get_lock() handles Lock recreation automatically when loop changes.
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(
+            _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
+        )
+    finally:
+        try:
+            loop.close()
+        except Exception:
+            pass
 
-    loop = getattr(run_email_pipeline._thread_loops, "loop", None)
-    if loop is None or loop.is_closed():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        run_email_pipeline._thread_loops.loop = loop
+# Keep old name as alias so nothing breaks
+run_serpapi_email_generation = run_email_pipeline
 
-    async def _task_wrapper():
-        return await _async_email_runner(df, json_data_folder, service_focus, email_cache_folder)
 
-    return loop.run_until_complete(_task_wrapper())
- 
- 
 # ==============================================================================
 # STANDALONE ENTRY POINT
 # ==============================================================================
