@@ -1,4 +1,6 @@
 
+
+
 import os
 import re
 import json
@@ -26,9 +28,23 @@ def _step_log(step: str, message: str, emoji: str = "▶"):
 CACHE_FOLDER = os.path.join(BASE_DIR, "research_cache")
 
 
+
+def _normalize_company_name(name: str) -> str:
+    import unicodedata
+    name = unicodedata.normalize("NFKD", name)
+    name = name.encode("ascii", "ignore").decode("ascii")
+    name = "".join(c for c in name if c.isalnum() or c in "._- ")
+    name = name.strip().replace(" ", "_").lower()
+    name = re.sub(r"_+", "_", name)
+    return name
+
 def _cache_path(company_name: str) -> str:
-    safe = "".join(c for c in company_name if c.isalnum() or c in "._- ").strip().replace(" ", "_").lower()
+    safe = _normalize_company_name(company_name)
     return os.path.join(CACHE_FOLDER, f"{safe}.json")
+
+# def _cache_path(company_name: str) -> str:
+#     safe = "".join(c for c in company_name if c.isalnum() or c in "._- ").strip().replace(" ", "_").lower()
+#     return os.path.join(CACHE_FOLDER, f"{safe}.json")
 
 
 def load_local_cache() -> set:
@@ -43,9 +59,12 @@ def load_local_cache() -> set:
                 try:
                     with open(os.path.join(CACHE_FOLDER, fname), "r", encoding="utf-8") as f:
                         data = json.load(f)
-                    name = data.get("company", "").strip().lower()
+                    # name = data.get("company", "").strip().lower()
+                    # if name:
+                    #     cached.add(name)
+                    name = data.get("company", "").strip()
                     if name:
-                        cached.add(name)
+                        cached.add(_normalize_company_name(name))
                 except Exception:
                     pass
         _step_log("STEP 2", f"Local cache loaded: {len(cached)} companies already researched.", "✅")
@@ -210,7 +229,8 @@ def run_serpapi_research(
     skipped_count       = 0
 
     for company in all_companies:
-        if company.strip().lower() in cached_names:
+        # if company.strip().lower() in cached_names:
+        if _normalize_company_name(company) in cached_names:
             skipped_count += 1
             data = get_company_from_cache(company)
             if data:
