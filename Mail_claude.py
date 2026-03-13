@@ -11,7 +11,7 @@ import sys
 import logging
 import time
 import threading
- 
+import unicodedata 
 from google import genai
 from google.genai import types
 from groq import AsyncGroq
@@ -38,7 +38,14 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout),
     ],
 )
- 
+
+def _normalize_name(name: str) -> str:
+    name = unicodedata.normalize("NFKD", str(name))
+    name = name.encode("ascii", "ignore").decode("ascii")
+    name = "".join(c for c in name if c.isalnum() or c in "._- ")
+    name = name.strip().replace(" ", "_").lower()
+    name = re.sub(r"_+", "_", name)
+    return name 
 # Mute noisy third-party loggers
 for _noisy in [
     "google", "google.genai", "google.generativeai",
@@ -610,10 +617,11 @@ async def _retry_failed_emails(
             f"Total Funding: {row.get('Total Funding', 'N/A')}"
         )
  
-        safe_filename = (
-            "".join(c for c in company_name if c.isalnum() or c in "._- ")
-            .strip().replace(" ", "_").lower()
-        )
+        # safe_filename = (
+        #     "".join(c for c in company_name if c.isalnum() or c in "._- ")
+        #     .strip().replace(" ", "_").lower()
+        # )
+        safe_filename = _normalize_name(company_name)
  
         # json_path       = os.path.join(json_data_folder, f"{safe_filename}.json")
         # pain_points_str = "Not available."
@@ -752,10 +760,11 @@ async def _retry_failed_emails(
                             f"Revenue: {row.get('Annual Revenue', 'N/A')}, "
                             f"Total Funding: {row.get('Total Funding', 'N/A')}"
                         )
-                        safe_filename = (
-                            "".join(c for c in company_name if c.isalnum() or c in "._- ")
-                            .strip().replace(" ", "_").lower()
-                        )
+                        # safe_filename = (
+                        #     "".join(c for c in company_name if c.isalnum() or c in "._- ")
+                        #     .strip().replace(" ", "_").lower()
+                        # )
+                        safe_filename = _normalize_name(company_name)
                         # json_path       = os.path.join(json_data_folder, f"{safe_filename}.json")
                         # pain_points_str = "Not available."
                         # market_news     = "No recent market updates available."
@@ -909,12 +918,13 @@ async def _async_email_runner(
         company_name  = str(row.get("Company Name", "")).strip()
         industry      = str(row.get("Industry", "Technology")).strip()
         
-        safe_filename = (
-            "".join(c for c in company_name if c.isalnum() or c in "._- ")
-            .strip()
-            .replace(" ", "_")
-            .lower()
-        )
+        # safe_filename = (
+        #     "".join(c for c in company_name if c.isalnum() or c in "._- ")
+        #     .strip()
+        #     .replace(" ", "_")
+        #     .lower()
+        # )
+        safe_filename = _normalize_name(company_name)
         cache_path = os.path.join(
             email_cache_folder, f"{safe_filename}_{service_focus.lower()}.json"
         )
