@@ -355,7 +355,8 @@ def main():
                 f"These rows are included in the CSV with blank email fields."
             )
 
-        st.dataframe(st.session_state.final_df_preview, use_container_width=True)
+        # st.dataframe(st.session_state.final_df_preview, use_container_width=True)
+        st.dataframe(st.session_state.final_df_preview, width="stretch")
 
         st.download_button(
             label     = "📥 Download Final Output (CSV)",
@@ -376,5 +377,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
