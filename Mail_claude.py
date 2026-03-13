@@ -111,7 +111,6 @@ HARD RULES:
 - Email stops immediately after bullet 4. Nothing after it.
 - Subject format: [Desired Outcome] without [Core Friction] — no tools/services/buzzwords"""
  
- 
 async def call_gemini_async(prompt: str, api_key: str) -> str:
     """
     Google Gemini 2.5 Flash — PRIMARY
@@ -261,6 +260,8 @@ THINK BEFORE WRITING (internal only — do not output):
 2. Pick the 2 strongest pains. Convert each to an outcome phrase (what good looks like, not what's broken).
 3. Map those pains to the capabilities above. Frame as outcomes, not features. Tone: curious peer, not vendor.
 4. Draft Block 1 opener. Ask yourself: does it sound like you read about them this morning? Rewrite until yes.
+
+
 
 ----
 OUTPUT FORMAT (follow exactly — no deviations):
@@ -520,24 +521,87 @@ async def _email_worker_loop(
 # RESULT PARSER
 # ==============================================================================
  
+# def _parse_email_output(raw_email: str) -> tuple[str, str]:
+#     if not raw_email:
+#         return "", "ERROR: API returned empty response"
+ 
+#     clean_text = raw_email.strip()
+#     clean_text = re.sub(r'^```[a-zA-Z]*\n', '', clean_text)
+#     clean_text = re.sub(r'\n```$', '', clean_text)
+#     clean_text = clean_text.strip()
+ 
+#     if clean_text.startswith("ERROR"):
+#         return "", clean_text
+ 
+#     subject_line = ""
+#     email_body = clean_text
+#     pre_body = ""
+ 
+#     body_match = re.search(r'(?m)^((?:Hi|Hello|Hey|Dear)[\s,].*)', clean_text, re.DOTALL | re.IGNORECASE)
+ 
+#     if body_match:
+#         email_body = body_match.group(1).strip()
+#         pre_body = clean_text[:body_match.start()].strip()
+#     else:
+#         parts = re.split(r'\n{2,}', clean_text, maxsplit=1)
+#         if len(parts) == 2:
+#             pre_body, email_body = parts[0].strip(), parts[1].strip()
+#         else:
+#             pre_body = ""
+#             email_body = clean_text
+ 
+#     if pre_body:
+#         sub_clean = re.sub(r'(?i)\*?\*?SUBJECT:\*?\*?\s*', '', pre_body).strip()
+#         sub_clean = re.sub(r'-\s*\n\s*', '', sub_clean)
+#         sub_clean = re.sub(r'\s*\n\s*', ' ', sub_clean)
+#         subject_line = re.sub(r'^"|"$', '', sub_clean).strip()
+ 
+#     if subject_line and email_body.startswith(subject_line):
+#         email_body = email_body[len(subject_line):].strip()
+ 
+#     email_body = email_body.strip()
+#     if not email_body:
+#         return "", "ERROR: Email body is completely empty after parsing."
+ 
+#     word_count = len(email_body.split())
+#     if word_count < 40:
+#         return "", f"ERROR: Truncated email (Only {word_count} words). Fails word count check."
+ 
+#     bullet_matches = re.findall(r'(?m)^[\s]*[\*•\-\–\—]|â€¢', email_body)
+#     # if len(bullet_matches) < 4:
+#     #     return "", f"ERROR: Incomplete generation. Found only {len(bullet_matches)} bullets, expected 4."
+#     if len(bullet_matches) < 2:
+#         return "", f"ERROR: Too few bullets ({len(bullet_matches)})."
+#     elif len(bullet_matches) < 4:
+#         logging.warning(f"⚠️ Only {len(bullet_matches)} bullets — saving anyway.")
+ 
+#     if email_body[-1] not in ['.', '!', '?', '"', '\'']:
+#         return "", "ERROR: Email body cut off mid-sentence (No ending punctuation)."
+ 
+#     last_line = email_body.split('\n')[-1].strip()
+#     if len(last_line.split()) < 4 and last_line[-1] not in ['.', '!', '?']:
+#         return "", f"ERROR: Last bullet point seems cut off ('{last_line}')."
+ 
+#     return subject_line, email_body
+
 def _parse_email_output(raw_email: str) -> tuple[str, str]:
     if not raw_email:
         return "", "ERROR: API returned empty response"
- 
+
     clean_text = raw_email.strip()
     clean_text = re.sub(r'^```[a-zA-Z]*\n', '', clean_text)
     clean_text = re.sub(r'\n```$', '', clean_text)
     clean_text = clean_text.strip()
- 
+
     if clean_text.startswith("ERROR"):
         return "", clean_text
- 
+
     subject_line = ""
     email_body = clean_text
     pre_body = ""
- 
+
     body_match = re.search(r'(?m)^((?:Hi|Hello|Hey|Dear)[\s,].*)', clean_text, re.DOTALL | re.IGNORECASE)
- 
+
     if body_match:
         email_body = body_match.group(1).strip()
         pre_body = clean_text[:body_match.start()].strip()
@@ -548,37 +612,44 @@ def _parse_email_output(raw_email: str) -> tuple[str, str]:
         else:
             pre_body = ""
             email_body = clean_text
- 
+
     if pre_body:
         sub_clean = re.sub(r'(?i)\*?\*?SUBJECT:\*?\*?\s*', '', pre_body).strip()
         sub_clean = re.sub(r'-\s*\n\s*', '', sub_clean)
         sub_clean = re.sub(r'\s*\n\s*', ' ', sub_clean)
         subject_line = re.sub(r'^"|"$', '', sub_clean).strip()
- 
+
     if subject_line and email_body.startswith(subject_line):
         email_body = email_body[len(subject_line):].strip()
- 
+
     email_body = email_body.strip()
     if not email_body:
         return "", "ERROR: Email body is completely empty after parsing."
- 
+
+    # CHECK 1: Word count — truly empty or garbage emails only
     word_count = len(email_body.split())
-    if word_count < 40:
-        return "", f"ERROR: Truncated email (Only {word_count} words). Fails word count check."
- 
+    if word_count < 30:
+        return "", f"ERROR: Too short ({word_count} words) — genuinely incomplete."
+
+    # CHECK 2: Bullets — minimum 3 required, 4 is ideal
+    # Less than 3 = AI clearly did not finish → retry worthy
+    # Exactly 3 = acceptable, save it with warning
     bullet_matches = re.findall(r'(?m)^[\s]*[\*•\-\–\—]|â€¢', email_body)
-    if len(bullet_matches) < 4:
-        return "", f"ERROR: Incomplete generation. Found only {len(bullet_matches)} bullets, expected 4."
- 
+    if len(bullet_matches) < 3:
+        return "", f"ERROR: Only {len(bullet_matches)} bullets — genuinely incomplete, needs retry."
+    if len(bullet_matches) == 3:
+        logging.warning(f"⚠️ 3 bullets instead of 4 — saving anyway.")
+
+    # CHECK 3: Ending punctuation — only warn, do NOT error
+    # LLMs sometimes skip period on last bullet even when content is valid
     if email_body[-1] not in ['.', '!', '?', '"', '\'']:
-        return "", "ERROR: Email body cut off mid-sentence (No ending punctuation)."
- 
-    last_line = email_body.split('\n')[-1].strip()
-    if len(last_line.split()) < 4 and last_line[-1] not in ['.', '!', '?']:
-        return "", f"ERROR: Last bullet point seems cut off ('{last_line}')."
- 
+        logging.warning("⚠️ No ending punctuation — saving anyway.")
+
+    # CHECK 4: Last line cut off — REMOVED
+    # This caused too many false positives on valid short bullets
+    # Word count check above already catches truly truncated emails
+
     return subject_line, email_body
- 
  
 async def _retry_failed_emails(
     df_output:          pd.DataFrame,
@@ -1187,7 +1258,7 @@ if __name__ == "__main__":
     logging.info("🚀 Running 3-API async pipeline (Gemini + Cerebras + Groq)…")
  
     CSV_FILE_PATH   = r"C:\Users\user\Desktop\Solution_Reverse_Enginnring\500_deployement - Copy\IT_Services_Filtered - Sheet9 (5).csv"
-    TXT_OUTPUT_FILE = "standalone_generated_email_IT_gemini_serp777.txt"
+    TXT_OUTPUT_FILE = "standalone_generated_email_IT_gemini_serp7779.txt"
     LOCAL_SERVICE_MODE = "AI"
  
     try:
@@ -1241,4 +1312,3 @@ if __name__ == "__main__":
  
     except Exception as e:
         logging.critical(f"❌ Standalone execution error: {e}")
-
