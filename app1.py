@@ -1,6 +1,4 @@
 
-
-
 import streamlit as st
 import pandas as pd
 import os
@@ -61,6 +59,32 @@ def _normalize_name(name: str) -> str:
     return name
 
 
+def _get_search_name(row) -> str:
+    """
+    Agar company naam corrupt hai (IPA™ → IPAâ„¢),
+    toh website domain se search naam nikalo.
+    Normal names ke liye original naam return karo.
+    """
+    company = str(row.get("Company Name", "")).strip()
+    
+    # Corruption check — non-ASCII chars ya known garbage patterns
+    is_corrupt = (
+        any(ord(c) > 127 for c in company) or
+        'â' in company or
+        'Ã' in company or
+        'â„¢' in company
+    )
+    
+    if is_corrupt:
+        website = str(row.get("Website", "")).strip()
+        if website and website.lower() != "nan":
+            # "https://thinkipa.com" → "thinkipa"
+            domain = re.sub(r'https?://(www\.)?', '', website)
+            domain = domain.split('.')[0].split('/')[0].lower()
+            if domain and len(domain) > 2:
+                return domain  
+    
+    return company  # Normal case
 def _fuzzy_match(key: str, store: dict):
     """
     Find best matching key in store.
@@ -109,6 +133,146 @@ def _safe_get(row, col, default="N/A"):
 # ==============================================================================
 # EMAIL CALLBACK
 # ==============================================================================
+# def _make_email_callback(df: pd.DataFrame, service_focus: str, results_store: dict):
+
+#     def callback(company_list: list) -> None:
+#         if not company_list:
+#             return
+
+#         os.makedirs(RESEARCH_FOLDER,    exist_ok=True)
+#         os.makedirs(EMAIL_CACHE_FOLDER, exist_ok=True)
+
+#         # csv_name_map: normalized_key -> original CSV company name
+#         # This is built BEFORE Mail_claude runs
+#         csv_name_map = {}
+#         mini_rows = []
+
+#         for company_data in company_list:
+#             company_name = company_data.get("company", "").strip()
+#             if not company_name:
+#                 continue
+
+#             matched = df[df["Company Name"].astype(str).str.strip().str.lower() == company_name.lower()]
+#             if matched.empty:
+#                 # Try partial match against original CSV
+#                 for _, dfrow in df.iterrows():
+#                     csv_co = str(dfrow.get("Company Name", "")).strip()
+#                     if _normalize_name(csv_co) in _normalize_name(company_name) or \
+#                        _normalize_name(company_name) in _normalize_name(csv_co):
+#                         matched = df[df["Company Name"] == csv_co]
+#                         break
+
+#             if matched.empty:
+#                 industry, annual_revenue, total_funding = "Technology", "N/A", "N/A"
+#                 original_csv_name = company_name
+#             else:
+#                 r              = matched.iloc[0]
+#                 industry       = str(_safe_get(r, "Industry", "Technology")).strip()
+#                 annual_revenue = _safe_get(r, "Annual Revenue")
+#                 total_funding  = _safe_get(r, "Total Funding")
+#                 original_csv_name = str(r.get("Company Name", company_name)).strip()
+
+#             # Save research JSON using normalized name
+#             safe_name = _normalize_name(company_name)
+#             with open(os.path.join(RESEARCH_FOLDER, f"{safe_name}.json"), "w", encoding="utf-8") as f:
+#                 json.dump({
+#                     "company":     company_name,
+#                     "pain_points": company_data.get("pain_points", []),
+#                     "recent_news": company_data.get("recent_news", [])
+#                 }, f, indent=4)
+
+#             # Map: normalized SerpAPI name -> original CSV name
+#             csv_name_map[safe_name] = original_csv_name
+#             # Also map normalized CSV name -> original CSV name
+#             csv_name_map[_normalize_name(original_csv_name)] = original_csv_name
+
+#             mini_rows.append({
+#                 "Company Name":  company_name,
+#                 "Industry":      industry,
+#                 "Annual Revenue": annual_revenue,
+#                 "Total Funding":  total_funding,
+#             })
+
+#         if not mini_rows:
+#             return
+
+#         mini_df = pd.DataFrame(mini_rows)
+
+#         from Mail_claude import run_email_pipeline
+#         batch_result_df = run_email_pipeline(
+#             df=mini_df,
+#             json_data_folder=RESEARCH_FOLDER,
+#             service_focus=service_focus,
+#             email_cache_folder=EMAIL_CACHE_FOLDER,
+#         )
+
+#         with _pipeline_lock:
+#             for _, result_row in batch_result_df.iterrows():
+#                 result_name     = str(result_row.get("Company Name", "")).strip()
+#                 result_norm     = _normalize_name(result_name)
+
+#                 # Step 1: direct match
+#                 # Step 2: fuzzy match via shared word parts
+#                 store_key = _fuzzy_match(result_norm, {_normalize_name(k): k for k in csv_name_map.values()})
+
+#                 # Use original CSV name as the results_store key (lowercased)
+#                 if store_key:
+#                     final_key = csv_name_map.get(store_key, csv_name_map.get(result_norm, result_norm))
+#                 else:
+#                     final_key = result_name
+
+#                 # Normalize final key for consistent lookup
+#                 lookup_key = _normalize_name(final_key)
+
+#                 results_store[lookup_key] = {
+#                     "Email_subject": result_row.get("Generated_Email_Subject", ""),
+#                     "Email_Body":    result_row.get("Generated_Email_Body",    ""),
+#                     "AI_Source":     result_row.get("AI_Source",               ""),
+#                 }
+
+#     return callback
+
+
+# ==============================================================================
+# HELPER — corrupt name detection + domain extraction
+# app1.py mein _normalize_name ke BAAD add karo (line ~1008)
+# ==============================================================================
+
+# def _get_search_name(row) -> str:
+#     """
+#     Agar company naam corrupt hai (IPA™ → IPAâ„¢),
+#     toh website domain se search naam nikalo.
+#     Normal names ke liye original naam return karo.
+
+#     Examples:
+#       'IPAâ„¢'  + 'https://thinkipa.com'  → 'thinkipa'
+#       'Hawaiʻi Gas' + 'https://hawaiigas.com' → 'hawaiigas'
+#       'Babcox Media' + any website           → 'Babcox Media'  (normal, no change)
+#     """
+#     company = str(row.get("Company Name", "")).strip()
+
+#     is_corrupt = (
+#         any(ord(c) > 127 for c in company) or
+#         'â'   in company or
+#         'Ã'   in company or
+#         'â„¢' in company
+#     )
+
+#     if is_corrupt:
+#         website = str(row.get("Website", "")).strip()
+#         if website and website.lower() not in ("nan", "none", ""):
+#             domain = re.sub(r'https?://(www\.)?', '', website)
+#             domain = domain.split('.')[0].split('/')[0].lower().strip()
+#             if domain and len(domain) > 2:
+#                 return domain   # e.g. "thinkipa"
+
+#     return company  # normal naam — koi change nahi
+
+
+# ==============================================================================
+# EMAIL CALLBACK  (replace the entire existing _make_email_callback in app1.py)
+# ==============================================================================
+
 def _make_email_callback(df: pd.DataFrame, service_focus: str, results_store: dict):
 
     def callback(company_list: list) -> None:
@@ -119,36 +283,44 @@ def _make_email_callback(df: pd.DataFrame, service_focus: str, results_store: di
         os.makedirs(EMAIL_CACHE_FOLDER, exist_ok=True)
 
         # csv_name_map: normalized_key -> original CSV company name
-        # This is built BEFORE Mail_claude runs
+        # Multiple keys can point to same CSV name (SerpAPI naam, domain, corrupt norm)
         csv_name_map = {}
-        mini_rows = []
+        mini_rows    = []
 
         for company_data in company_list:
             company_name = company_data.get("company", "").strip()
             if not company_name:
                 continue
 
-            matched = df[df["Company Name"].astype(str).str.strip().str.lower() == company_name.lower()]
+            # ── Match SerpAPI naam back to original CSV row ──────────────────
+            matched = df[
+                df["Company Name"].astype(str).str.strip().str.lower() == company_name.lower()
+            ]
+
             if matched.empty:
-                # Try partial match against original CSV
+                # Partial normalize match fallback
                 for _, dfrow in df.iterrows():
                     csv_co = str(dfrow.get("Company Name", "")).strip()
-                    if _normalize_name(csv_co) in _normalize_name(company_name) or \
-                       _normalize_name(company_name) in _normalize_name(csv_co):
+                    if (
+                        _normalize_name(csv_co) in _normalize_name(company_name) or
+                        _normalize_name(company_name) in _normalize_name(csv_co)
+                    ):
                         matched = df[df["Company Name"] == csv_co]
                         break
 
             if matched.empty:
-                industry, annual_revenue, total_funding = "Technology", "N/A", "N/A"
+                industry          = "Technology"
+                annual_revenue    = "N/A"
+                total_funding     = "N/A"
                 original_csv_name = company_name
             else:
-                r              = matched.iloc[0]
-                industry       = str(_safe_get(r, "Industry", "Technology")).strip()
-                annual_revenue = _safe_get(r, "Annual Revenue")
-                total_funding  = _safe_get(r, "Total Funding")
+                r                 = matched.iloc[0]
+                industry          = str(_safe_get(r, "Industry", "Technology")).strip()
+                annual_revenue    = _safe_get(r, "Annual Revenue")
+                total_funding     = _safe_get(r, "Total Funding")
                 original_csv_name = str(r.get("Company Name", company_name)).strip()
 
-            # Save research JSON using normalized name
+            # ── Save research JSON ───────────────────────────────────────────
             safe_name = _normalize_name(company_name)
             with open(os.path.join(RESEARCH_FOLDER, f"{safe_name}.json"), "w", encoding="utf-8") as f:
                 json.dump({
@@ -157,14 +329,24 @@ def _make_email_callback(df: pd.DataFrame, service_focus: str, results_store: di
                     "recent_news": company_data.get("recent_news", [])
                 }, f, indent=4)
 
-            # Map: normalized SerpAPI name -> original CSV name
+            # ── csv_name_map — teen keys register karo ──────────────────────
+            # Key 1: SerpAPI naam normalized  e.g. "ipa_technology"
             csv_name_map[safe_name] = original_csv_name
-            # Also map normalized CSV name -> original CSV name
+
+            # Key 2: original CSV naam normalized  e.g. "ipaa" (corrupt norm)
             csv_name_map[_normalize_name(original_csv_name)] = original_csv_name
 
+            # Key 3: domain naam  e.g. "thinkipa"
+            # Sirf tab add karo jab CSV naam corrupt ho aur domain alag ho
+            if not matched.empty:
+                domain_key = _get_search_name(matched.iloc[0])
+                domain_norm = _normalize_name(domain_key)
+                if domain_norm not in csv_name_map:   # duplicate avoid karo
+                    csv_name_map[domain_norm] = original_csv_name
+
             mini_rows.append({
-                "Company Name":  company_name,
-                "Industry":      industry,
+                "Company Name":   company_name,
+                "Industry":       industry,
                 "Annual Revenue": annual_revenue,
                 "Total Funding":  total_funding,
             })
@@ -184,31 +366,42 @@ def _make_email_callback(df: pd.DataFrame, service_focus: str, results_store: di
 
         with _pipeline_lock:
             for _, result_row in batch_result_df.iterrows():
-                result_name     = str(result_row.get("Company Name", "")).strip()
-                result_norm     = _normalize_name(result_name)
+                result_name = str(result_row.get("Company Name", "")).strip()
+                result_norm = _normalize_name(result_name)
 
-                # Step 1: direct match
-                # Step 2: fuzzy match via shared word parts
-                store_key = _fuzzy_match(result_norm, {_normalize_name(k): k for k in csv_name_map.values()})
+                # Fuzzy match: result_norm ko csv_name_map keys se match karo
+                store_key = _fuzzy_match(
+                    result_norm,
+                    {_normalize_name(k): k for k in csv_name_map.values()}
+                )
 
-                # Use original CSV name as the results_store key (lowercased)
                 if store_key:
                     final_key = csv_name_map.get(store_key, csv_name_map.get(result_norm, result_norm))
                 else:
                     final_key = result_name
 
-                # Normalize final key for consistent lookup
+                # results_store mein original CSV naam ka normalized version key hoga
                 lookup_key = _normalize_name(final_key)
 
-                results_store[lookup_key] = {
+                # results_store[lookup_key] = {
+                #     "Email_subject": result_row.get("Generated_Email_Subject", ""),
+                #     "Email_Body":    result_row.get("Generated_Email_Body",    ""),
+                #     "AI_Source":     result_row.get("AI_Source",               ""),
+                email_data = {
                     "Email_subject": result_row.get("Generated_Email_Subject", ""),
                     "Email_Body":    result_row.get("Generated_Email_Body",    ""),
                     "AI_Source":     result_row.get("AI_Source",               ""),
                 }
+                results_store[lookup_key] = email_data
+
+                # Also save under ALL keys in csv_name_map that point to same company
+                # This fixes: "thinkipa" → "IPA™" and "ocrealtors" → "Orange County REALTORS®"
+                for map_key, map_val in csv_name_map.items():
+                    if _normalize_name(map_val) == lookup_key:
+                        results_store[map_key] = email_data
+                
 
     return callback
-
-
 # ==============================================================================
 # PIPELINE RUNNER
 # ==============================================================================
@@ -225,11 +418,21 @@ def _run_full_pipeline(df: pd.DataFrame, service_choice: str, results_store: dic
         final_df["Email_Body"]    = ""
         final_df["AI_Source"]     = ""
 
+        # for idx, row in final_df.iterrows():
+        #     csv_name = str(row.get("Company Name", "")).strip()
+        #     norm_key = _normalize_name(csv_name)
+
+        #     matched_key = _fuzzy_match(norm_key, results_store)
         for idx, row in final_df.iterrows():
             csv_name = str(row.get("Company Name", "")).strip()
             norm_key = _normalize_name(csv_name)
 
-            matched_key = _fuzzy_match(norm_key, results_store)
+            # Corrupt names ke liye domain se bhi try karo
+            domain_key = _normalize_name(_get_search_name(row))
+            if domain_key != norm_key and domain_key in results_store:
+                matched_key = domain_key
+            else:
+                matched_key = _fuzzy_match(norm_key, results_store)
 
             if matched_key:
                 final_df.at[idx, "Email_subject"] = results_store[matched_key].get("Email_subject", "")
@@ -278,7 +481,16 @@ def main():
     uploaded_file = st.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx"])
 
     if uploaded_file is not None and st.session_state.uploaded_df is None:
-        df_temp = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
+        # df_temp = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
+
+        if uploaded_file.name.endswith(".csv"):
+            try:
+                df_temp = pd.read_csv(uploaded_file, encoding='utf-8-sig')
+            except UnicodeDecodeError:
+                uploaded_file.seek(0)
+                df_temp = pd.read_csv(uploaded_file, encoding='latin-1')
+        else:
+            df_temp = pd.read_excel(uploaded_file)
         df_temp.columns = [str(c).strip() for c in df_temp.columns]
         if "Company Name" not in df_temp.columns:
             st.error("❌ The uploaded file MUST contain a 'Company Name' column.")
@@ -377,6 +589,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
