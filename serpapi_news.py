@@ -1,6 +1,5 @@
 
 
-
 import os
 import re
 import json
@@ -37,6 +36,32 @@ def _normalize_company_name(name: str) -> str:
     name = name.strip().replace(" ", "_").lower()
     name = re.sub(r"_+", "_", name)
     return name
+
+
+def _get_search_name(row) -> str:
+    """
+    Agar company naam corrupt hai (IPA™ → IPAâ„¢),
+    toh website domain se search naam nikalo.
+    Normal names ke liye original naam return karo.
+    """
+    company = str(row.get("Company Name", "")).strip()
+
+    is_corrupt = (
+        any(ord(c) > 127 for c in company) or
+        'â'   in company or
+        'Ã'   in company or
+        'â„¢' in company
+    )
+
+    if is_corrupt:
+        website = str(row.get("Website", "")).strip()
+        if website and website.lower() not in ("nan", "none", ""):
+            domain = re.sub(r'https?://(www\.)?', '', website)
+            domain = domain.split('.')[0].split('/')[0].lower().strip()
+            if domain and len(domain) > 2:
+                return domain
+
+    return company
 
 def _cache_path(company_name: str) -> str:
     safe = _normalize_company_name(company_name)
@@ -216,9 +241,26 @@ def run_serpapi_research(
 
     _step_log("STEP 1", "Extracting unique company names from uploaded sheet...")
 
-    raw_names     = df["Company Name"].astype(str).str.strip().dropna().tolist()
-    unique_set    = {name for name in raw_names if name and name.lower() != "nan"}
-    all_companies = sorted(unique_set)
+    # raw_names     = df["Company Name"].astype(str).str.strip().dropna().tolist()
+    # unique_set    = {name for name in raw_names if name and name.lower() != "nan"}
+    # all_companies = sorted(unique_set)
+
+    raw_names  = df["Company Name"].astype(str).str.strip().dropna().tolist()
+    unique_set = {name for name in raw_names if name and name.lower() != "nan"}
+
+    # Corrupt names ko domain se replace karo BEFORE SerpAPI search
+    all_companies_clean = []
+    for name in sorted(unique_set):
+        # df mein us company ki row dhundho
+        mask = df["Company Name"].astype(str).str.strip() == name
+        if mask.any() and "Website" in df.columns:
+            row = df[mask].iloc[0]
+            search_name = _get_search_name(row)  # corrupt → domain, normal → same
+        else:
+            search_name = name
+        all_companies_clean.append(search_name)
+
+    all_companies = all_companies_clean
 
     _step_log("STEP 1", f"Found {len(raw_names)} rows → {len(all_companies)} unique after deduplication.", "✅")
 
@@ -295,7 +337,20 @@ def run_serpapi_research(
                 _step_log("STEP 3", f"{batch_label} → No data returned. Skipping.", "⚠️")
                 continue
 
+            # for company_data in company_list:
+            #     save_company_to_cache(company_data)
+            #     name = company_data.get("company", "").strip()
+
             for company_data in company_list:
+                # SerpAPI ne jo naam return kiya use search naam se override karo
+                # Taaki "IPA (thinkipa.com)" → "thinkipa" rahe cache mein
+                serpapi_returned_name = company_data.get("company", "").strip()
+                # Original search naam dhundho — jo humne bheja tha
+                for search_name in companies_to_fetch:
+                    if _normalize_company_name(search_name) in _normalize_company_name(serpapi_returned_name) or \
+                       _normalize_company_name(serpapi_returned_name) in _normalize_company_name(search_name):
+                        company_data["company"] = search_name
+                        break
                 save_company_to_cache(company_data)
                 name = company_data.get("company", "").strip()
                 if name:
