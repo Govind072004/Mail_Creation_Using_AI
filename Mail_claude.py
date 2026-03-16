@@ -1167,13 +1167,23 @@ from google import genai
 from google.genai import types
 from groq import AsyncGroq
 from cerebras.cloud.sdk import AsyncCerebras
- 
+import tiktoken
 from openai import AsyncAzureOpenAI
 from api_rotating_claude import (
     KeyWorker,      build_worker_pool,
     get_azure_config,
 )
  
+####
+#tiktoken setup
+_ENC = tiktoken.get_encoding("cl100k_base")
+
+def _tok(text: str) -> int:
+    """Count tokens in any text string."""
+    try:
+        return len(_ENC.encode(str(text)))
+    except Exception:
+        return len(str(text)) // 4   # fallback estimate
 # ==============================================================================
 # LOGGING SETUP
 # ==============================================================================
@@ -1262,11 +1272,29 @@ HARD RULES:
 - Email stops immediately after bullet 4. Nothing after it.
 - Subject format: [Desired Outcome] without [Core Friction] — no tools/services/buzzwords"""
  
+# async def call_gemini_async(prompt: str, api_key: str) -> str:
+#     """
+#     Google Gemini 2.5 Flash — PRIMARY
+#     System instruction used for persona, user prompt for company data.
+#     """
+#     client   = genai.Client(api_key=api_key)
+#     response = await client.aio.models.generate_content(
+#         model="gemini-2.5-flash",
+#         contents=prompt,
+#         config=types.GenerateContentConfig(
+#             temperature=0.25,
+#             max_output_tokens=2000,
+#             system_instruction=SYSTEM_PROMPT,
+#         ),
+#     )
+#     return response.text
+
 async def call_gemini_async(prompt: str, api_key: str) -> str:
-    """
-    Google Gemini 2.5 Flash — PRIMARY
-    System instruction used for persona, user prompt for company data.
-    """
+    # COUNT INPUT TOKENS before sending
+    sys_tok    = _tok(SYSTEM_PROMPT)
+    prompt_tok = _tok(prompt)
+    input_tok  = sys_tok + prompt_tok
+
     client   = genai.Client(api_key=api_key)
     response = await client.aio.models.generate_content(
         model="gemini-2.5-flash",
@@ -1277,14 +1305,41 @@ async def call_gemini_async(prompt: str, api_key: str) -> str:
             system_instruction=SYSTEM_PROMPT,
         ),
     )
+
+    # COUNT OUTPUT TOKENS after receiving
+    output_tok = _tok(response.text or "")
+    total_tok  = input_tok + output_tok
+
+    logging.info(
+        f"[Gemini] system={sys_tok} + prompt={prompt_tok} + output={output_tok} "
+        f"= TOTAL {total_tok} tokens"
+    )
     return response.text
  
  
+# async def call_cerebras_async(prompt: str, api_key: str) -> str:
+#     """
+#     Cerebras llama3.1-8b — SECONDARY
+#     System role used for persona, user role for company task.
+#     """
+#     client   = AsyncCerebras(api_key=api_key)
+#     response = await client.chat.completions.create(
+#         model="llama3.1-8b",
+#         messages=[
+#             {"role": "system", "content": SYSTEM_PROMPT},
+#             {"role": "user",   "content": prompt},
+#         ],
+#         temperature=0.25,
+#         max_completion_tokens=2000,
+#     )
+#     return response.choices[0].message.content
+
 async def call_cerebras_async(prompt: str, api_key: str) -> str:
-    """
-    Cerebras llama3.1-8b — SECONDARY
-    System role used for persona, user role for company task.
-    """
+    # COUNT INPUT TOKENS before sending
+    sys_tok    = _tok(SYSTEM_PROMPT)
+    prompt_tok = _tok(prompt)
+    input_tok  = sys_tok + prompt_tok
+
     client   = AsyncCerebras(api_key=api_key)
     response = await client.chat.completions.create(
         model="llama3.1-8b",
@@ -1295,14 +1350,46 @@ async def call_cerebras_async(prompt: str, api_key: str) -> str:
         temperature=0.25,
         max_completion_tokens=2000,
     )
-    return response.choices[0].message.content
+
+    choice     = response.choices[0]
+    content    = choice.message.content or ""
+
+    # COUNT OUTPUT TOKENS after receiving
+    output_tok = _tok(content)
+    total_tok  = input_tok + output_tok
+
+    logging.info(
+        f"[Cerebras] system={sys_tok} + prompt={prompt_tok} + output={output_tok} "
+        f"= TOTAL {total_tok} tokens"
+    )
+
+    if getattr(choice, "finish_reason", None) == "length":
+        return "ERROR: Cerebras cut output mid-sentence (finish_reason=length). Needs retry."
+    return content
  
  
+# async def call_groq_async(prompt: str, api_key: str) -> str:
+#     """
+#     Groq llama-4-scout-17b — OVERFLOW
+#     System role used for persona, user role for company task.
+#     """
+#     client   = AsyncGroq(api_key=api_key)
+#     response = await client.chat.completions.create(
+#         model="meta-llama/llama-4-scout-17b-16e-instruct",
+#         messages=[
+#             {"role": "system", "content": SYSTEM_PROMPT},
+#             {"role": "user",   "content": prompt},
+#         ],
+#         temperature=0.25,
+#         max_tokens=2000,
+#     )
+#     return response.choices[0].message.content
+
 async def call_groq_async(prompt: str, api_key: str) -> str:
-    """
-    Groq llama-4-scout-17b — OVERFLOW
-    System role used for persona, user role for company task.
-    """
+    sys_tok    = _tok(SYSTEM_PROMPT)
+    prompt_tok = _tok(prompt)
+    input_tok  = sys_tok + prompt_tok
+
     client   = AsyncGroq(api_key=api_key)
     response = await client.chat.completions.create(
         model="meta-llama/llama-4-scout-17b-16e-instruct",
@@ -1313,20 +1400,57 @@ async def call_groq_async(prompt: str, api_key: str) -> str:
         temperature=0.25,
         max_tokens=2000,
     )
-    return response.choices[0].message.content
+
+    choice     = response.choices[0]
+    content    = choice.message.content or ""
+    output_tok = _tok(content)
+    total_tok  = input_tok + output_tok
+
+    logging.info(
+        f"[Groq] system={sys_tok} + prompt={prompt_tok} + output={output_tok} "
+        f"= TOTAL {total_tok} tokens"
+    )
+
+    if getattr(choice, "finish_reason", None) == "length":
+        return "ERROR: Groq cut output mid-sentence (finish_reason=length). Needs retry."
+    return content
  
+# async def call_azure_async(prompt: str) -> str:
+#     """
+#     Azure OpenAI GPT-4o Mini — EMERGENCY FALLBACK
+#     """
+#     config = get_azure_config()
+ 
+#     client = AsyncAzureOpenAI(
+#         api_key        = config["api_key"],
+#         azure_endpoint = config["endpoint"],
+#         api_version    = config["api_version"],
+#     )
+ 
+#     response = await client.chat.completions.create(
+#         model       = config["deployment"],
+#         messages    = [
+#             {"role": "system", "content": SYSTEM_PROMPT},
+#             {"role": "user",   "content": prompt},
+#         ],
+#         temperature = 0.25,
+#         max_tokens  = 2000,
+#     )
+#     return response.choices[0].message.content
+
+
 async def call_azure_async(prompt: str) -> str:
-    """
-    Azure OpenAI GPT-4o Mini — EMERGENCY FALLBACK
-    """
+    sys_tok    = _tok(SYSTEM_PROMPT)
+    prompt_tok = _tok(prompt)
+    input_tok  = sys_tok + prompt_tok
+
     config = get_azure_config()
- 
     client = AsyncAzureOpenAI(
         api_key        = config["api_key"],
         azure_endpoint = config["endpoint"],
         api_version    = config["api_version"],
     )
- 
+
     response = await client.chat.completions.create(
         model       = config["deployment"],
         messages    = [
@@ -1336,7 +1460,16 @@ async def call_azure_async(prompt: str) -> str:
         temperature = 0.25,
         max_tokens  = 2000,
     )
-    return response.choices[0].message.content
+
+    content    = response.choices[0].message.content or ""
+    output_tok = _tok(content)
+    total_tok  = input_tok + output_tok
+
+    logging.info(
+        f"[Azure] system={sys_tok} + prompt={prompt_tok} + output={output_tok} "
+        f"= TOTAL {total_tok} tokens"
+    )
+    return content
  
 # ==============================================================================
 # SERVICE CAPABILITY BLOCKS — only relevant one injected per prompt
@@ -1423,12 +1556,13 @@ SUBJECT:
 [One line. Outcome without Friction. No tools, no buzzwords, no company name.]
  
 Hi ,
+[BLANK LINE HERE — mandatory empty line after greeting before Block 1]
+
+[[Block 1 — exactly 2 lines. Write both lines together as one paragraph — NO line break between them. Both lines together must be 180 to 200 characters total.
+line 1: Start with "I noticed" or "I saw". Reference ONE specific news item or financial signal. React like a peer — don't summarize, don't explain. One sharp observation only.
+line 2: Connect to a natural business direction. No pain mention. No industry name. No generic sector statements.]
  
-[Block 1 — 2 sentences MAX.
-Sentence 1: Start with "I noticed" or "I saw". Reference ONE specific news item or financial signal. React like a peer — don't summarize, don't explain. One sharp observation only.
-Sentence 2: Connect to a natural business direction. No pain mention. No industry name. No generic sector statements.]
- 
-[Block 2 — 2 sentences only.
+[Block 2 — 2 lines only.
 Line 1: ALWAYS start with "At AnavClouds," — describe what we do as the logical next layer for where this company is heading. Mention 2-3 work areas naturally in prose. Never bullet here.
 Line 2: "We've helped teams [outcome of pain 1] and [outcome of pain 2]." — mapped directly to THIS company's pain points, not generic.]
  
@@ -1795,8 +1929,30 @@ def _parse_email_output(raw_email: str) -> tuple[str, str]:
 
     # CHECK 3: Ending punctuation — only warn, do NOT error
     # LLMs sometimes skip period on last bullet even when content is valid
-    if email_body[-1] not in ['.', '!', '?', '"', '\'']:
-        logging.warning("⚠️ No ending punctuation — saving anyway.")
+    # if email_body[-1] not in ['.', '!', '?', '"', '\'']:
+    #     logging.warning("⚠️ No ending punctuation — saving anyway.")
+
+    SENTENCE_END = ('.', '!', '?', '"', "'", ')')
+    all_lines    = [l.strip() for l in email_body.split('\n') if l.strip()]
+    bullet_lines = [l for l in all_lines if re.match(r'^[•*\-\–\—]', l)]
+
+    for i, line in enumerate(bullet_lines, start=1):
+        content = re.sub(r'^[•*\-\–\—]\s*', '', line).strip()
+        words   = content.split()
+        if len(words) >= 4 and not content.endswith(SENTENCE_END):
+            return "", (
+                f"ERROR: Bullet {i} cut mid-sentence — no dot at end. "
+                f"Snippet: '...{content[-50:]}' — needs retry."
+            )
+
+    # CHECK 4: Last line of entire email must also end properly
+    last_line    = all_lines[-1] if all_lines else ""
+    last_content = re.sub(r'^[•*\-\–\—]\s*', '', last_line).strip()
+    if len(last_content.split()) >= 4 and not last_content.endswith(SENTENCE_END):
+        return "", (
+            f"ERROR: Email ends mid-sentence. "
+            f"Last line: '...{last_content[-60:]}' — needs retry."
+        )
 
     # CHECK 4: Last line cut off — REMOVED
     # This caused too many false positives on valid short bullets
@@ -2411,7 +2567,7 @@ if __name__ == "__main__":
     logging.info("🚀 Running 3-API async pipeline (Gemini + Cerebras + Groq)…")
  
     CSV_FILE_PATH   = r"C:\Users\user\Desktop\Solution_Reverse_Enginnring\500_deployement - Copy\IT_Services_Filtered - Sheet9 (5).csv"
-    TXT_OUTPUT_FILE = "standalone_generated_email_IT_gemini_serp1.txt"
+    TXT_OUTPUT_FILE = "standalone_generated_email_IT_gemini_serp_new1.txt"
     LOCAL_SERVICE_MODE = "AI"
  
     try:
