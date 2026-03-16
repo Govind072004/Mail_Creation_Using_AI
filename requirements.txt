@@ -11,3 +11,5 @@ streamlit
 google-genai
 nest_asyncio
 json_repair
+tiktoken
+
