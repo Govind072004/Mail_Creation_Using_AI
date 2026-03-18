@@ -3,6 +3,8 @@
 
 
 
+
+
 import os
 import json
 import pandas as pd
@@ -726,7 +728,11 @@ async def _email_worker_loop(
             #     logging.info(f"✅ [W{worker_id:02d}|{provider_label}] {company} — Done & Cached.")
             # else:
             #     logging.warning(f"⚠️  [W{worker_id:02d}|{provider_label}] {company} — Parsing Issue.")
+            # subject_line, email_body = _parse_email_output_combined(raw_email) if service_focus.lower() == "combined" else _parse_email_output(raw_email)
+            # if subject_line and email_body and "ERROR" not in raw_email:
             subject_line, email_body = _parse_email_output_combined(raw_email) if service_focus.lower() == "combined" else _parse_email_output(raw_email)
+            subject_line = _clean_email_text(subject_line)   # ← ADD
+            email_body   = _clean_email_text(email_body)     # ← ADD
             if subject_line and email_body and "ERROR" not in raw_email:
                 if cache_path:
                     with open(cache_path, "w", encoding="utf-8") as f:
@@ -845,6 +851,34 @@ async def _email_worker_loop(
 #         return "", f"ERROR: Last bullet point seems cut off ('{last_line}')."
  
 #     return subject_line, email_body
+def _clean_email_text(text: str) -> str:
+    """
+    Replace fancy Unicode characters with plain ASCII equivalents.
+    Ensures bullet points and dashes render correctly in all email clients.
+    """
+    if not text:
+        return text
+    replacements = {
+        "\u2022": "*",   # •  bullet point   → *
+        "\u2014": "-",   # —  em dash        → -
+        "\u2013": "-",   # –  en dash        → -
+        "\u2018": "'",   # '  left quote     → '
+        "\u2019": "'",   # '  right quote    → '
+        "\u201c": '"',   # "  left dbl quote → "
+        "\u201d": '"',   # "  right dbl quot → "
+        "\u2026": "...", # …  ellipsis       → ...
+        "\u00a0": " ",   # non-breaking space→ space
+        "\x95":   "*",   # Windows bullet   → *
+        "\x97":   "-",   # Windows em dash  → -
+        "\x96":   "-",   # Windows en dash  → -
+        "\x91":   "'",   # Windows left quote
+        "\x92":   "'",   # Windows right quote
+        "\x93":   '"',   # Windows left dbl quote
+        "\x94":   '"',   # Windows right dbl quote
+    }
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
+    return text
 
 def _parse_email_output(raw_email: str) -> tuple[str, str]:
     if not raw_email:
@@ -1236,8 +1270,12 @@ async def _retry_failed_emails(
         source     = res.get("source", "Failed")
         cache_path = res.get("cache_path", "")
  
+        # subject_line, email_body = _parse_email_output_combined(raw_email) if service_focus.lower() == "combined" else _parse_email_output(raw_email)
+        
         subject_line, email_body = _parse_email_output_combined(raw_email) if service_focus.lower() == "combined" else _parse_email_output(raw_email)
- 
+        subject_line = _clean_email_text(subject_line)   # ← ADD
+        email_body   = _clean_email_text(email_body)     # ← ADD
+       
         if subject_line and email_body and "ERROR" not in raw_email:
             df_output.at[index, "Generated_Email_Subject"] = subject_line
             df_output.at[index, "Generated_Email_Body"]    = email_body
@@ -1357,8 +1395,12 @@ async def _retry_failed_emails(
                         raise asyncio.TimeoutError()
                     raw_email = _az_fut.result()
                     raw_email = raw_email or "ERROR: Azure empty response"
+                    # subject_line, email_body = _parse_email_output_combined(raw_email) if service_focus.lower() == "combined" else _parse_email_output(raw_email)
+                    
                     subject_line, email_body = _parse_email_output_combined(raw_email) if service_focus.lower() == "combined" else _parse_email_output(raw_email)
- 
+                    subject_line = _clean_email_text(subject_line)   # ← ADD
+                    email_body   = _clean_email_text(email_body)     # ← ADD
+                    # if not subject_line or not email_body or "ERROR" in raw_email:
                     # Loose parse fallback — raw output better than blank
                     if not subject_line or not email_body or "ERROR" in raw_email:
                         lines = [l.strip() for l in raw_email.strip().split('\n') if l.strip()]
@@ -1636,8 +1678,12 @@ async def _async_email_runner(
         source     = res.get("source",    "Failed")
         cache_path = res.get("cache_path","")
  
+        # subject_line, email_body = _parse_email_output_combined(raw_email) if service_focus.lower() == "combined" else _parse_email_output(raw_email)
+        
         subject_line, email_body = _parse_email_output_combined(raw_email) if service_focus.lower() == "combined" else _parse_email_output(raw_email)
- 
+        subject_line = _clean_email_text(subject_line)   # ← ADD
+        email_body   = _clean_email_text(email_body)     # ← ADD
+        
         df_output.at[index, "Generated_Email_Subject"] = subject_line
         df_output.at[index, "Generated_Email_Body"]    = email_body
         df_output.at[index, "AI_Source"]               = source
