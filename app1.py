@@ -410,7 +410,8 @@ def _run_full_pipeline(df: pd.DataFrame, service_choice: str, results_store: dic
         run_serpapi_research(
             df=df,
             email_callback=_make_email_callback(df, service_choice, results_store),
-            batch_size=10
+            batch_size=10,
+            max_parallel_fetches=4
         )
 
         final_df = df.copy()
